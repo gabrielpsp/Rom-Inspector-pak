@@ -1,6 +1,6 @@
 {
     "name": "Rom Inspector",
-    "version": "V0.0.1-Beta",
+    "version": "V0.0.1-beta",
     "type": "TOOL",
     "description": "This script manages ROM files with some tools",
     "author": "Gabrielpsp",
