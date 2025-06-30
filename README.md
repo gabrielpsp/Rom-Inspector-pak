@@ -5,6 +5,7 @@ ROM Inspector is a shell script designed for the TrimUI Brick running NextUI, en
 This initial beta release provides a set of tools to optimize your SD card file organization by identifying and resolving common issues with ROMs and covers.
 
 ✨ Key Features :
+
 ✅ ROM Size Verification
 Identifies ROMs with suspicious sizes (too small or too large) based on system-specific thresholds, with an option to delete after confirmation.
 
@@ -29,9 +30,11 @@ Compatibility: Optimized for TrimUI Brick with NextUI, supports .media folders.
 Interface: Uses minui-list for intuitive menu navigation.
 
 Logs: Detailed logs saved in :
+
 /mnt/SDCARD/.userdata/tg5040/logs/Rom Inspector.txt for debugging and tracking.
 
 Exported Reports: Generates text files (e.g., missing_covers.txt, rom_sizes_report.txt) saved in :
+
 /mnt/SDCARD/ for offline analysis.
 
 Safety: User confirmation required before deleting any files.
