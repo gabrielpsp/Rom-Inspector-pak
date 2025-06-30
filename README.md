@@ -136,4 +136,4 @@ Designed for NextUI; compatibility with other firmwares may vary.
 Dependencies: Relies on BusyBox core utils, minui-list, and jq, which are lightweight and typically included in custom firmwares and pak.
 
 Credits
-Created with passion by Gabrielpsp for the retro gaming community. Designed for TrimUI Brick and other custom firmware-based handhelds running NextUI, OnionOS, or similar environments.
+Created with passion by Gabrielpsp for the retro gaming community. Designed for TrimUI Brick running NextUI OS.
