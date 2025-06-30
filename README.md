@@ -1,6 +1,6 @@
 ROM-INSPECTOR.PAK
 
-🕹️ ROM Inspector v0.1.0 Beta
+🕹️ ROM Inspector
 ROM Inspector is a shell script designed for the TrimUI Brick running NextUI, enabling you to efficiently manage and analyze your ROM collections and artwork.
 This initial beta release provides a set of tools to optimize your SD card file organization by identifying and resolving common issues with ROMs and covers.
 
