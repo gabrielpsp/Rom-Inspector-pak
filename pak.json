@@ -1,11 +1,11 @@
 {
     "name": "Rom Inspector",
-    "version": "0.01 Beta",
+    "version": "V0.0.1-Beta",
     "type": "TOOL",
     "description": "This script manages ROM files with some tools",
     "author": "Gabrielpsp",
     "repo_url": "https://github.com/gabrielpsp/Rom-Inspector",
-    "release_filename": "Rom Inspector.pak.zip",
+    "release_filename": "Rom.Inspector.pak.zip",
     "platforms": [
       "tg5040"
     ],
