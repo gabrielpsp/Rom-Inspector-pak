@@ -49,7 +49,7 @@ Performance: Limits processing to 1000 files per system to prevent overload.
 
 It should be : /mnt/SDCARD/Tools/tg5040/Rom Inspector.pak
 
-2️⃣ Make sure the following tools are available in:
+2️⃣ Make sure the following files are available in:
 
 /mnt/SDCARD/.userdata/tg5040/Rom Inspector.pak/bin
 
