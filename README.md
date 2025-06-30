@@ -29,7 +29,7 @@ Compatibility: Optimized for TrimUI Brick with NextUI, supports .media folders.
 
 Interface: Uses minui-list for intuitive menu navigation.
 
-Logs: Detailed logs saved in :
+🗄️ Logs: Detailed logs saved in :
 
 /mnt/SDCARD/.userdata/tg5040/logs/Rom Inspector.txt for debugging and tracking.
 
