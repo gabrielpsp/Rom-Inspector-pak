@@ -93,4 +93,4 @@ Bug fixes
 
 🤝 Contribute
 Fork, test, and share your suggestions to help ROM Inspector evolve!
-All contributions are welcome! 💪
+All contributions are welcome!
