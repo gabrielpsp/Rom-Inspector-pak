@@ -46,7 +46,8 @@ Performance: Limits processing to 1000 files per system to prevent overload.
 1️⃣ Extract the contents of the compressed file Rom Inspector.pak.zip to:
 
 /mnt/SDCARD/Tools/tg5040/
-It should be /mnt/SDCARD/Tools/tg5040/Rom Inspector.pak
+
+It should be : /mnt/SDCARD/Tools/tg5040/Rom Inspector.pak
 
 2️⃣ Make sure the following tools are available in:
 
