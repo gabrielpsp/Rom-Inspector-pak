@@ -1,0 +1,8 @@
+{
+    "label": "Rom Inspector",
+    "launch": "launch.sh",
+    "description": "This script manages ROM files with some tools",
+    "platforms": [
+        "tg5040"
+    ]
+}
