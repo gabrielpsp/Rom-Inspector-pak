@@ -61,7 +61,7 @@ It should be : /mnt/SDCARD/Tools/tg5040/Rom Inspector.pak
 
 ⚠️ Beta Notes
 
-This is a beta release and may contain bugs — please test on a backup SD card first!
+This is a beta release and may contain bugs, so please test on a backup SD card first!
 
 ROM size thresholds and expected cover resolutions are predefined but can be adjusted.
 
