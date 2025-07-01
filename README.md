@@ -86,11 +86,13 @@ SD card with a standard /mnt/SDCARD/Roms directory structure.
 Tools installed: minui-list, jq, identify from the .pak
 
 🔮 Future Plans
-Enhanced compatibility with additional systems and formats.
+- Enhanced compatibility with additional systems and formats.
 
-Performance improvements for large collections.
+- Performance improvements for large collections.
 
-Bug fixes
+- Other tools
+
+- Bug fixes
 
 🤝 Contribute
 Fork, test, and share your suggestions to help ROM Inspector evolve!
