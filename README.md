@@ -59,7 +59,7 @@ It should be : /mnt/SDCARD/Tools/tg5040/Rom Inspector.pak
 
 4️⃣ Access the Tools section in NextUI, then select Rom Inspector from the menu to launch it.
 
-⚠️ Beta Notes
+⚠️ Beta Notes :
 
 This is a beta release and may contain bugs, so please test on a backup SD card first!
 
@@ -69,7 +69,7 @@ Compatibility with all emulated systems is not yet fully tested.
 
 Feedback and bug reports are very welcome via GitHub issues!
 
-🚀 Usage Example
+🚀 Usage examples :
 Launch the script to access the main menu, where you can:
 
 ✅ Check ROM sizes to find suspicious files.
@@ -78,14 +78,14 @@ Launch the script to access the main menu, where you can:
 
 📝 Generate reports to help plan adding missing covers.
 
-📌 Prerequisites
-TrimUI Brick running NextUI.
+📌 Prerequisites :
+- TrimUI Brick running NextUI.
 
-SD card with a standard /mnt/SDCARD/Roms directory structure.
+- TF Card with a standard /mnt/SDCARD/Roms directory structure.
 
-Tools installed: minui-list, jq, identify from the .pak
+- Tools installed: minui-list, jq, identify from the .pak
 
-🔮 Future Plans
+🔮 Future Plans :
 - Enhanced compatibility with additional systems and formats.
 
 - Performance improvements for large collections.
