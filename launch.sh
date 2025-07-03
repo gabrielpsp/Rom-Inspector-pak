@@ -9,9 +9,11 @@ STATS_FILE="/mnt/SDCARD/statistics_report.txt"
 ROM_SIZES_FILE="/mnt/SDCARD/rom_sizes_report.txt"
 ORPHANED_FILES_FILE="/mnt/SDCARD/orphaned_files.txt"
 DISK_USAGE_FILE="/mnt/SDCARD/disk_usage_report.txt"
+ROM_NAMES_FILE="/mnt/SDCARD/rom_names_report.txt"
+ZIP_ROMS_FILE="/mnt/SDCARD/zip_roms_report.txt"
 
 # Reduced logging: Only log critical initialization details
-echo "Initializing: USERDATA_PATH=$USERDATA_PATH, LOGS_PATH=$LOGS_PATH, PAK_DIR=$PAK_DIR, CACHE_FILE=$CACHE_FILE, EXPORT_FILE=$EXPORT_FILE, STATS_FILE=$STATS_FILE, ROM_SIZES_FILE=$ROM_SIZES_FILE, ORPHANED_FILES_FILE=$ORPHANED_FILES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+echo "Initializing: USERDATA_PATH=$USERDATA_PATH, LOGS_PATH=$LOGS_PATH, PAK_DIR=$PAK_DIR, CACHE_FILE=$CACHE_FILE, EXPORT_FILE=$EXPORT_FILE, STATS_FILE=$STATS_FILE, ROM_SIZES_FILE=$ROM_SIZES_FILE, ORPHANED_FILES_FILE=$ORPHANED_FILES_FILE, ROM_NAMES_FILE=$ROM_NAMES_FILE, ZIP_ROMS_FILE=$ZIP_ROMS_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
 
 # Verify PAK_DIR exists
 if [ ! -d "$PAK_DIR" ]; then
@@ -85,7 +87,7 @@ cleanup() {
     else
         echo "No cache file found on exit: $CACHE_FILE"
     fi
-    rm -f /tmp/stay_awake /tmp/platforms.menu /tmp/main_menu.menu /tmp/minui-output /tmp/roms_missing.menu /tmp/roms_missing_temp.menu /tmp/duplicates.menu /tmp/roms_duplicates.menu /tmp/rom_files.menu /tmp/rom_names.txt /tmp/rom_names_only.txt /tmp/statistics.menu /tmp/total_roms.menu /tmp/covers_percentage.menu /tmp/rom_sizes.menu /tmp/rom_sizes_temp.menu /tmp/roms_orphaned.menu /tmp/loading_pid 2>/dev/null
+    rm -f /tmp/stay_awake /tmp/platforms.menu /tmp/main_menu.menu /tmp/minui-output /tmp/roms_missing.menu /tmp/roms_missing_temp.menu /tmp/duplicates.menu /tmp/roms_duplicates.menu /tmp/rom_files.menu /tmp/rom_names.txt /tmp/rom_names_only.txt /tmp/statistics.menu /tmp/total_roms.menu /tmp/covers_percentage.menu /tmp/rom_sizes.menu /tmp/rom_sizes_temp.menu /tmp/roms_orphaned.menu /tmp/systems_zip.menu /tmp/roms_zip.menu /tmp/zip_action.menu /tmp/keep_zip.menu /tmp/loading_pid 2>/dev/null
     echo "Cleaned up temporary files."
 }
 trap cleanup EXIT INT TERM HUP QUIT
@@ -170,7 +172,7 @@ get_valid_extensions() {
             echo "md smd gen bin zip"
             ;;
         "Sony PlayStation (PS)"|"PS")
-            echo "bin iso img zip"
+            echo "bin iso img zip chd"
             ;;
         "PC Engine (PCE)"|"TurboGrafx-16 (PCE)"|"Super Grafx (SGFX)"|"TurboGrafx-CD (PCECD)"|"PCE"|"SGFX"|"PCECD")
             echo "pce zip"
@@ -337,7 +339,736 @@ is_valid_extension() {
     return 1
 }
 
-check_rom_sizes() {
+Manage_zip_roms() {
+    # Create logs directory if it doesn't exist
+    if [ ! -d "$LOGS_PATH" ]; then
+        mkdir -p "$LOGS_PATH" 2>/dev/null || {
+            echo "Error: Cannot create $LOGS_PATH" >> "$LOGS_PATH/Rom Inspector.txt"
+            return 1
+        }
+    fi
+
+    # Check log file permissions
+    touch "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || {
+        echo "Error: Cannot write to $LOGS_PATH/Rom Inspector.txt" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+
+    echo "=== Checking ZIP ROMs by System ===" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    # Check dependencies
+    command -v unzip >/dev/null 2>&1 || {
+        echo "Error: unzip command not found" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+    command -v minui-list >/dev/null 2>&1 || {
+        echo "Error: minui-list command not found" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+    command -v jq >/dev/null 2>&1 || {
+        echo "Error: jq command not found" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+
+    # Define file paths
+    systems_menu="/tmp/systems_zip.menu"
+    roms_menu="/tmp/roms_zip.menu"
+    zip_action_menu="/tmp/zip_action.menu"
+    keep_zip_menu="/tmp/keep_zip.menu"
+    zip_counts_file="/tmp/zip_counts.txt"
+    cache_file="/mnt/SDCARD/zip_roms_cache.txt"
+    roms_cache_dir="/mnt/SDCARD/roms_cache"
+    zip_count=0
+    decompressed_count=0
+    deleted_count=0
+    skipped_count=0
+    zip_summary=""
+
+    # Initialize report file
+    touch "$ZIP_ROMS_FILE" 2>/dev/null || {
+        echo "Error: Failed to create $ZIP_ROMS_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+    echo "ZIP ROMs Report - $(date)" > "$ZIP_ROMS_FILE"
+
+    # Create action menus
+    printf "Decompress ZIP\nDelete ZIP\nSkip ZIP\n" > "$zip_action_menu" 2>/dev/null || {
+        echo "Error: Failed to create $zip_action_menu" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+    printf "Keep\nDelete\n" > "$keep_zip_menu" 2>/dev/null || {
+        echo "Error: Failed to create $keep_zip_menu" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+
+    # Create temporary files
+    : > "$systems_menu" 2>/dev/null
+    : > "$zip_counts_file" 2>/dev/null || {
+        echo "Error: Failed to create temporary files" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+
+    # Create ROMs cache directory
+    mkdir -p "$roms_cache_dir" 2>/dev/null || {
+        echo "Error: Failed to create $roms_cache_dir" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    }
+
+    # Check if cache is valid (less than 5 minutes old)
+    cache_valid=false
+    if [ -f "$cache_file" ]; then
+        cache_time=$(stat -c %Y "$cache_file" 2>/dev/null)
+        current_time=$(date +%s)
+        if [ $((current_time - cache_time)) -lt 300 ]; then
+            cache_valid=true
+        fi
+    fi
+
+    if [ "$cache_valid" = true ]; then
+        echo "Using cached system scan results" >> "$LOGS_PATH/Rom Inspector.txt"
+        while IFS=':' read -r sys_name count; do
+            if [ "$count" -gt 0 ]; then
+                echo "$sys_name ($count ZIP files)" >> "$systems_menu"
+                echo "$sys_name:$count" >> "$zip_counts_file"
+                zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+                zip_count=$((zip_count + count))
+                echo "System: $sys_name ($count ZIP files)" >> "$ZIP_ROMS_FILE"
+                if [ -f "$roms_cache_dir/$sys_name.txt" ]; then
+                    cat "$roms_cache_dir/$sys_name.txt" | while IFS= read -r rom_name; do
+                        echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
+                    done
+                fi
+            fi
+        done < "$cache_file"
+    else
+        echo "Scanning systems for ZIP ROMs..." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Scanning for ZIP ROMs..." 2 &
+        MESSAGE_PID=$!
+        : > "$cache_file" 2>/dev/null
+        for dir in /mnt/SDCARD/Roms/*; do
+            if [ -d "$dir" ]; then
+                sys_name=$(basename "$dir")
+                # Run counting in background
+                (
+                    find "$dir" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
+                    count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                    if [ "$count" -gt 0 ]; then
+                        echo "$sys_name:$count" >> "$cache_file"
+                        echo "$sys_name:$count" >> "$zip_counts_file"
+                        echo "$sys_name ($count ZIP files)" >> "$systems_menu"
+                        echo "System: $sys_name ($count ZIP files)" >> "$ZIP_ROMS_FILE"
+                        while IFS= read -r file; do
+                            rom_name=$(basename "$file")
+                            echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
+                        done < "$roms_cache_dir/$sys_name.txt"
+                        zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+                        zip_count=$((zip_count + count))
+                    fi
+                ) &
+            fi
+        done
+        wait
+        kill $MESSAGE_PID 2>/dev/null
+    fi
+
+    # Add global action options
+    printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
+
+    # Format zip_summary
+    if [ -n "$zip_summary" ]; then
+        zip_summary=$(echo "$zip_summary" | sed 's/;$//' | sed 's/;/ - /g')
+        echo "ZIP ROMs Summary: $zip_summary" >> "$LOGS_PATH/Rom Inspector.txt"
+        echo "ZIP ROMs Summary: $zip_summary" >> "$ZIP_ROMS_FILE"
+    fi
+
+    if [ ! -s "$systems_menu" ]; then
+        echo "No systems with ZIP ROMs found" >> "$LOGS_PATH/Rom Inspector.txt"
+        echo "No systems with ZIP ROMs found" >> "$ZIP_ROMS_FILE"
+        show_message "No ZIP ROMs found in any system." 2
+        sleep 1
+        rm -rf "$systems_menu" "$zip_action_menu" "$keep_zip_menu" "$zip_counts_file" "$roms_cache_dir" "$cache_file" 2>/dev/null
+        show_message "Results in /mnt/SDCARD/zip_roms_report.txt" 2
+        sleep 1
+        return 0
+    fi
+
+    # Systems menu loop
+    while true; do
+        rm -f /tmp/minui-output 2>/dev/null
+        minui-list --disable-auto-sleep \
+            --item-key systems_zip \
+            --file "$systems_menu" \
+            --format text \
+            --cancel-text "BACK" \
+            --title "Systems with ZIP ROMs" \
+            --write-location /tmp/minui-output \
+            --write-value state
+        MINUI_EXIT_CODE=$?
+        if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+            echo "User exited systems menu (exit code: $MINUI_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+            break
+        fi
+
+        idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+        [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ] && {
+            echo "Invalid or no selection in systems menu: idx=$idx" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "Error: Invalid selection in systems menu." 2
+            sleep 1
+            break
+        }
+
+        selected_option=$(sed -n "$((idx + 1))p" "$systems_menu" 2>/dev/null)
+        [ -z "$selected_option" ] && {
+            echo "Error: Failed to retrieve selected option for index $idx" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "Error: Failed to retrieve selected option." 2
+            sleep 1
+            break
+        }
+        echo "Selected option: $selected_option" >> "$LOGS_PATH/Rom Inspector.txt"
+
+        # Handle global actions
+        case "$selected_option" in
+            "Decompress all ZIP ROMs")
+                echo "Processing Decompress all ZIP ROMs..." >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Decompressing ZIP ROMs..." &
+                MESSAGE_PID=$!
+                for dir in /mnt/SDCARD/Roms/*; do
+                    if [ -d "$dir" ]; then
+                        sys_name=$(basename "$dir")
+                        [ -f "$roms_cache_dir/$sys_name.txt" ] || continue
+                        while IFS= read -r file; do
+                            [ -f "$file" ] || {
+                                echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
+                                skipped_count=$((skipped_count + 1))
+                                continue
+                            }
+                            rom_name=$(basename "$file")
+                            unzip -t "$file" >/dev/null 2>&1 && {
+                                unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1 && {
+                                    echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                    decompressed_count=$((decompressed_count + 1))
+                                } || {
+                                    echo "Error: Failed to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Failed to decompress $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                    skipped_count=$((skipped_count + 1))
+                                }
+                            } || {
+                                echo "Error: Invalid or corrupted ZIP file: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                echo "  Action: Skipped $rom_name in $sys_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
+                                skipped_count=$((skipped_count + 1))
+                            }
+                        done < "$roms_cache_dir/$sys_name.txt"
+                    fi
+                done
+                kill $MESSAGE_PID 2>/dev/null
+                show_message "All ZIP ROMs decompressed!" 2
+                echo "All ZIP ROMs decompressed!" >> "$LOGS_PATH/Rom Inspector.txt"
+                echo "  Action: All ZIP ROMs decompressed" >> "$ZIP_ROMS_FILE"
+                rm -rf "$cache_file" "$roms_cache_dir" 2>/dev/null
+                # Update system menu and caches
+                : > "$systems_menu" 2>/dev/null
+                : > "$zip_counts_file" 2>/dev/null
+                zip_count=0
+                zip_summary=""
+                for dir in /mnt/SDCARD/Roms/*; do
+                    if [ -d "$dir" ]; then
+                        sys_name=$(basename "$dir")
+                        find "$dir" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
+                        count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                        if [ "$count" -gt 0 ]; then
+                            echo "$sys_name ($count ZIP files)" >> "$systems_menu"
+                            echo "$sys_name:$count" >> "$zip_counts_file"
+                            echo "$sys_name:$count" >> "$cache_file"
+                            zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+                            zip_count=$((zip_count + count))
+                            while IFS= read -r file; do
+                                rom_name=$(basename "$file")
+                                echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
+                            done < "$roms_cache_dir/$sys_name.txt"
+                        fi
+                    fi
+                done
+                printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
+                continue
+                ;;
+            "Delete all ZIP ROMs")
+                echo "Processing Delete all ZIP ROMs..." >> "$LOGS_PATH/Rom Inspector.txt"
+                if confirm_deletion "all ZIP ROMs" "all ZIP ROMs"; then
+                    show_message "Deleting ZIP ROMs..." &
+                    MESSAGE_PID=$!
+                    for dir in /mnt/SDCARD/Roms/*; do
+                        if [ -d "$dir" ]; then
+                            sys_name=$(basename "$dir")
+                            [ -f "$roms_cache_dir/$sys_name.txt" ] || continue
+                            while IFS= read -r file; do
+                                [ -f "$file" ] || {
+                                    echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
+                                    skipped_count=$((skipped_count + 1))
+                                    continue
+                                }
+                                rom_name=$(basename "$file")
+                                rm -f "$file" && {
+                                    echo "Deleted ZIP ROM: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                    deleted_count=$((deleted_count + 1))
+                                } || {
+                                    echo "Error: Failed to delete $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Failed to delete $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                    skipped_count=$((skipped_count + 1))
+                                }
+                            done < "$roms_cache_dir/$sys_name.txt"
+                        fi
+                    done
+                    kill $MESSAGE_PID 2>/dev/null
+                    show_message "All ZIP ROMs deleted!" 2
+                    echo "All ZIP ROMs deleted!" >> "$LOGS_PATH/Rom Inspector.txt"
+                    echo "  Action: All ZIP ROMs deleted" >> "$ZIP_ROMS_FILE"
+                    rm -rf "$cache_file" "$roms_cache_dir" 2>/dev/null
+                    # Update system menu and caches
+                    : > "$systems_menu" 2>/dev/null
+                    : > "$zip_counts_file" 2>/dev/null
+                    zip_count=0
+                    zip_summary=""
+                    for dir in /mnt/SDCARD/Roms/*; do
+                        if [ -d "$dir" ]; then
+                            sys_name=$(basename "$dir")
+                            find "$dir" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
+                            count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                            if [ "$count" -gt 0 ]; then
+                                echo "$sys_name ($count ZIP files)" >> "$systems_menu"
+                                echo "$sys_name:$count" >> "$zip_counts_file"
+                                echo "$sys_name:$count" >> "$cache_file"
+                                zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+                                zip_count=$((zip_count + count))
+                                while IFS= read -r file; do
+                                    rom_name=$(basename "$file")
+                                    echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
+                                done < "$roms_cache_dir/$sys_name.txt"
+                            fi
+                        fi
+                    done
+                    printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
+                else
+                    echo "User cancelled deletion of all ZIP ROMs" >> "$LOGS_PATH/Rom Inspector.txt"
+                    echo "  Action: Skipped deletion of all ZIP ROMs" >> "$ZIP_ROMS_FILE"
+                fi
+                continue
+                ;;
+            "Decompress and delete all ZIP ROMs")
+                echo "Processing Decompress and delete all ZIP ROMs..." >> "$LOGS_PATH/Rom Inspector.txt"
+                if confirm_deletion "all ZIP ROMs" "all ZIP ROMs"; then
+                    show_message "Decompressing and deleting ZIP ROMs..." &
+                    MESSAGE_PID=$!
+                    for dir in /mnt/SDCARD/Roms/*; do
+                        if [ -d "$dir" ]; then
+                            sys_name=$(basename "$dir")
+                            [ -f "$roms_cache_dir/$sys_name.txt" ] || continue
+                            while IFS= read -r file; do
+                                [ -f "$file" ] || {
+                                    echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
+                                    skipped_count=$((skipped_count + 1))
+                                    continue
+                                }
+                                rom_name=$(basename "$file")
+                                unzip -t "$file" >/dev/null 2>&1 && {
+                                    unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1 && {
+                                        echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                        decompressed_count=$((decompressed_count + 1))
+                                        rm -f "$file" && {
+                                            echo "Deleted original ZIP: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Decompressed and deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            deleted_count=$((deleted_count + 1))
+                                        } || {
+                                            echo "Error: Failed to delete $rom_name in $sys_name after decompression" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Decompressed but failed to delete $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            skipped_count=$((skipped_count + 1))
+                                        }
+                                    } || {
+                                        echo "Error: Failed to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        echo "  Action: Failed to decompress $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                        skipped_count=$((skipped_count + 1))
+                                    }
+                                } || {
+                                    echo "Error: Invalid or corrupted ZIP file: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Skipped $rom_name in $sys_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
+                                    skipped_count=$((skipped_count + 1))
+                                }
+                            done < "$roms_cache_dir/$sys_name.txt"
+                        fi
+                    done
+                    kill $MESSAGE_PID 2>/dev/null
+                    show_message "All ZIP ROMs decompressed and deleted!" 2
+                    echo "All ZIP ROMs decompressed and deleted!" >> "$LOGS_PATH/Rom Inspector.txt"
+                    echo "  Action: All ZIP ROMs decompressed and deleted" >> "$ZIP_ROMS_FILE"
+                    rm -rf "$cache_file" "$roms_cache_dir" 2>/dev/null
+                    # Update system menu and caches
+                    : > "$systems_menu" 2>/dev/null
+                    : > "$zip_counts_file" 2>/dev/null
+                    zip_count=0
+                    zip_summary=""
+                    for dir in /mnt/SDCARD/Roms/*; do
+                        if [ -d "$dir" ]; then
+                            sys_name=$(basename "$dir")
+                            find "$dir" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
+                            count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                            if [ "$count" -gt 0 ]; then
+                                echo "$sys_name ($count ZIP files)" >> "$systems_menu"
+                                echo "$sys_name:$count" >> "$zip_counts_file"
+                                echo "$sys_name:$count" >> "$cache_file"
+                                zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+                                zip_count=$((zip_count + count))
+                                while IFS= read -r file; do
+                                    rom_name=$(basename "$file")
+                                    echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
+                                done < "$roms_cache_dir/$sys_name.txt"
+                            fi
+                        fi
+                    done
+                    printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
+                else
+                    echo "User cancelled decompress and delete all ZIP ROMs" >> "$LOGS_PATH/Rom Inspector.txt"
+                    echo "  Action: Skipped decompress and delete all ZIP ROMs" >> "$ZIP_ROMS_FILE"
+                fi
+                continue
+                ;;
+            *)
+                sys_name=$(echo "$selected_option" | sed 's/ ([0-9]* ZIP files)//')
+                [ -z "$sys_name" ] && {
+                    echo "Error: Failed to retrieve system name for index $idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                    show_message "Error: Failed to retrieve system name." 2
+                    sleep 1
+                    break
+                }
+                echo "Selected system: $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                ;;
+        esac
+
+        # ROMs menu loop
+        while true; do
+            : > "$roms_menu" 2>/dev/null || {
+                echo "Error: Failed to create $roms_menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Failed to create ROMs menu." 2
+                sleep 2
+                break
+            }
+
+            # Use cached ROM list if available and valid
+            if [ -f "$roms_cache_dir/$sys_name.txt" ] && [ -s "$roms_cache_dir/$sys_name.txt" ]; then
+                cat "$roms_cache_dir/$sys_name.txt" | while IFS= read -r file; do
+                    rom_name=$(basename "$file")
+                    echo "$rom_name" >> "$roms_menu"
+                done
+            else
+                find "/mnt/SDCARD/Roms/$sys_name" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
+                cat "$roms_cache_dir/$sys_name.txt" | while IFS= read -r file; do
+                    rom_name=$(basename "$file")
+                    echo "$rom_name" >> "$roms_menu"
+                done
+            fi
+
+            if [ ! -s "$roms_menu" ]; then
+                echo "No ZIP ROMs found in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                echo "No ZIP ROMs found in $sys_name" >> "$ZIP_ROMS_FILE"
+                show_message "No ZIP ROMs found in $sys_name." 2
+                sleep 1
+                rm -f "$roms_menu" 2>/dev/null
+                break
+            fi
+
+            rm -f /tmp/minui-output 2>/dev/null
+            minui-list --disable-auto-sleep \
+                --item-key roms_zip \
+                --file "$roms_menu" \
+                --format text \
+                --cancel-text "BACK" \
+                --title "ZIP ROMs in $sys_name" \
+                --write-location /tmp/minui-output \
+                --write-value state
+            ROMS_EXIT_CODE=$?
+            if [ "$ROMS_EXIT_CODE" -ne 0 ]; then
+                echo "User exited ROMs menu for $sys_name (exit code: $ROMS_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+                break
+            fi
+
+            rom_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+            [ "$rom_idx" = "null" ] || [ -z "$rom_idx" ] || [ "$rom_idx" = "-1" ] && {
+                echo "Invalid or no selection in ROMs menu for $sys_name: idx=$rom_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Invalid selection in ROMs menu." 2
+                sleep 1
+                break
+            }
+
+            rom_name=$(sed -n "$((rom_idx + 1))p" "$roms_menu" 2>/dev/null)
+            [ -z "$rom_name" ] && {
+                echo "Error: Failed to retrieve ROM name for index $rom_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Failed to retrieve ROM name." 2
+                sleep 1
+                break
+            }
+            file="/mnt/SDCARD/Roms/$sys_name/$rom_name"
+            echo "Selected ZIP ROM: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+
+            rm -f /tmp/minui-output 2>/dev/null
+            minui-list --disable-auto-sleep \
+                --item-key zip_action \
+                --file "$zip_action_menu" \
+                --format text \
+                --cancel-text "CANCEL" \
+                --title "Action for ZIP ROM: $rom_name" \
+                --write-location /tmp/minui-output \
+                --write-value state
+            ACTION_EXIT_CODE=$?
+            if [ "$ACTION_EXIT_CODE" -ne 0 ]; then
+                echo "User cancelled action for $rom_name (exit code: $ACTION_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+                echo "  Action: Skipped $rom_name" >> "$ZIP_ROMS_FILE"
+                skipped_count=$((skipped_count + 1))
+                continue
+            fi
+
+            action_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+            [ "$action_idx" = "null" ] || [ -z "$action_idx" ] || [ "$action_idx" = "-1" ] && {
+                echo "Invalid or no selection in action menu for $rom_name: idx=$action_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Invalid action selection for $rom_name." 2
+                sleep 1
+                echo "  Action: Skipped $rom_name (error: invalid action selection)" >> "$ZIP_ROMS_FILE"
+                skipped_count=$((skipped_count + 1))
+                continue
+            }
+            action=$(sed -n "$((action_idx + 1))p" "$zip_action_menu" 2>/dev/null)
+            [ -z "$action" ] && {
+                echo "Error: Failed to retrieve action for index $action_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Failed to retrieve action for $rom_name." 2
+                sleep 1
+                echo "  Action: Skipped $rom_name (error: failed to retrieve action)" >> "$ZIP_ROMS_FILE"
+                skipped_count=$((skipped_count + 1))
+                continue
+            }
+            echo "Selected action for $rom_name: $action" >> "$LOGS_PATH/Rom Inspector.txt"
+
+            case "$action" in
+                "Decompress ZIP")
+                    [ -f "$file" ] || {
+                        echo "Error: File $file does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Error: File $rom_name does not exist." 2
+                        sleep 1
+                        echo "  Action: Skipped $rom_name (file does not exist)" >> "$ZIP_ROMS_FILE"
+                        skipped_count=$((skipped_count + 1))
+                        continue
+                    }
+                    show_message "Decompressing $rom_name..." &
+                    MESSAGE_PID=$!
+                    unzip -t "$file" >/dev/null 2>&1 && {
+                        unzip -o "$file" -d "/mnt/SDCARD/Roms/$sys_name" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1 && {
+                            kill $MESSAGE_PID 2>/dev/null
+                            echo "Successfully decompressed $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                            echo "  Action: Decompressed $rom_name" >> "$ZIP_ROMS_FILE"
+                            decompressed_count=$((decompressed_count + 1))
+                            rm -f /tmp/minui-output 2>/dev/null
+                            minui-list --disable-auto-sleep \
+                                --item-key keep_zip \
+                                --file "$keep_zip_menu" \
+                                --format text \
+                                --cancel-text "CANCEL" \
+                                --title "Keep or delete original ZIP: $rom_name" \
+                                --write-location /tmp/minui-output \
+                                --write-value state
+                            KEEP_EXIT_CODE=$?
+                            if [ "$KEEP_EXIT_CODE" -ne 0 ]; then
+                                echo "User cancelled keep/delete action for $rom_name (exit code: $KEEP_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+                                echo "  Action: Kept original ZIP for $rom_name (cancelled)" >> "$ZIP_ROMS_FILE"
+                                continue
+                            fi
+                            keep_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+                            [ "$keep_idx" = "null" ] || [ -z "$keep_idx" ] || [ "$keep_idx" = "-1" ] && {
+                                echo "Invalid or no selection in keep/delete menu for $rom_name: idx=$keep_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "Error: Invalid keep/delete selection for $rom_name." 2
+                                sleep 1
+                                echo "  Action: Kept original ZIP for $rom_name (error: invalid selection)" >> "$ZIP_ROMS_FILE"
+                                continue
+                            }
+                            keep_action=$(sed -n "$((keep_idx + 1))p" "$keep_zip_menu" 2>/dev/null)
+                            [ -z "$keep_action" ] && {
+                                echo "Error: Failed to retrieve keep/delete action for index $keep_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "Error: Failed to retrieve keep/delete action for $rom_name." 2
+                                sleep 1
+                                echo "  Action: Kept original ZIP for $rom_name (error: failed to retrieve action)" >> "$ZIP_ROMS_FILE"
+                                continue
+                            }
+                            echo "Selected keep/delete action for $rom_name: $keep_action" >> "$LOGS_PATH/Rom Inspector.txt"
+                            if [ "$keep_action" = "Delete" ]; then
+                                if confirm_deletion "$file" "ZIP ROM"; then
+                                    show_message "Deleting $rom_name..." &
+                                    MESSAGE_PID=$!
+                                    rm -f "$file" && {
+                                        kill $MESSAGE_PID 2>/dev/null
+                                        echo "Deleted original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        echo "  Action: Decompressed and deleted original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
+                                        deleted_count=$((deleted_count + 1))
+                                        # Update ROM cache
+                                        grep -v "^$file$" "$roms_cache_dir/$sys_name.txt" > "$roms_cache_dir/$sys_name.tmp" && mv "$roms_cache_dir/$sys_name.tmp" "$roms_cache_dir/$sys_name.txt"
+                                        # Update system cache
+                                        count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                                        tmp_cache="/tmp/cache_tmp.txt"
+                                        : > "$tmp_cache"
+                                        while IFS=':' read -r name cnt; do
+                                            if [ "$name" = "$sys_name" ]; then
+                                                [ "$count" -gt 0 ] && echo "$name:$count" >> "$tmp_cache"
+                                            else
+                                                echo "$name:$cnt" >> "$tmp_cache"
+                                            fi
+                                        done < "$cache_file"
+                                        mv "$tmp_cache" "$cache_file" 2>/dev/null
+                                        # Update counts file
+                                        : > "$tmp_cache"
+                                        while IFS=':' read -r name cnt; do
+                                            if [ "$name" = "$sys_name" ]; then
+                                                [ "$count" -gt 0 ] && echo "$name:$count" >> "$tmp_cache"
+                                            else
+                                                echo "$name:$cnt" >> "$tmp_cache"
+                                            fi
+                                        done < "$zip_counts_file"
+                                        mv "$tmp_cache" "$zip_counts_file" 2>/dev/null
+                                        # Update systems menu
+                                        : > "$systems_menu"
+                                        while IFS=':' read -r name cnt; do
+                                            [ "$cnt" -gt 0 ] && echo "$name ($cnt ZIP files)" >> "$systems_menu"
+                                        done < "$zip_counts_file"
+                                        printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
+                                    } || {
+                                        kill $MESSAGE_PID 2>/dev/null
+                                        echo "Error: Failed to delete $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        show_message "Error: Failed to delete $rom_name." 2
+                                        sleep 1
+                                        echo "  Action: Decompressed but failed to delete original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
+                                    }
+                                else
+                                    echo "User chose to keep original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Decompressed and kept original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
+                                fi
+                            else
+                                echo "User chose to keep original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                echo "  Action: Decompressed and kept original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
+                            fi
+                        } || {
+                            kill $MESSAGE_PID 2>/dev/null
+                            echo "Error: Failed to decompress $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                            show_message "Error: Failed to decompress $rom_name." 2
+                            sleep 1
+                            echo "  Action: Failed to decompress $rom_name" >> "$ZIP_ROMS_FILE"
+                            skipped_count=$((skipped_count + 1))
+                        }
+                    } || {
+                        kill $MESSAGE_PID 2>/dev/null
+                        echo "Error: Invalid or corrupted ZIP file: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Error: Invalid ZIP $rom_name." 2
+                        sleep 1
+                        echo "  Action: Skipped $rom_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
+                        skipped_count=$((skipped_count + 1))
+                    }
+                    ;;
+                "Delete ZIP")
+                    [ -f "$file" ] || {
+                        echo "Error: File $file does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Error: File $rom_name does not exist." 2
+                        sleep 1
+                        echo "  Action: Skipped $rom_name (file does not exist)" >> "$ZIP_ROMS_FILE"
+                        skipped_count=$((skipped_count + 1))
+                        continue
+                    }
+                    if confirm_deletion "$file" "ZIP ROM"; then
+                        show_message "Deleting $rom_name..." &
+                        MESSAGE_PID=$!
+                        rm -f "$file" && {
+                            kill $MESSAGE_PID 2>/dev/null
+                            echo "Deleted ZIP ROM: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                            echo "  Action: Deleted $rom_name" >> "$ZIP_ROMS_FILE"
+                            deleted_count=$((deleted_count + 1))
+                            # Update ROM cache
+                            grep -v "^$file$" "$roms_cache_dir/$sys_name.txt" > "$roms_cache_dir/$sys_name.tmp" && mv "$roms_cache_dir/$sys_name.tmp" "$roms_cache_dir/$sys_name.txt"
+                            # Update system cache
+                            count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                            tmp_cache="/tmp/cache_tmp.txt"
+                            : > "$tmp_cache"
+                            while IFS=':' read -r name cnt; do
+                                if [ "$name" = "$sys_name" ]; then
+                                    [ "$count" -gt 0 ] && echo "$name:$count" >> "$tmp_cache"
+                                else
+                                    echo "$name:$cnt" >> "$tmp_cache"
+                                fi
+                            done < "$cache_file"
+                            mv "$tmp_cache" "$cache_file" 2>/dev/null
+                            # Update counts file
+                            : > "$tmp_cache"
+                            while IFS=':' read -r name cnt; do
+                                if [ "$name" = "$sys_name" ]; then
+                                    [ "$count" -gt 0 ] && echo "$name:$count" >> "$tmp_cache"
+                                else
+                                    echo "$name:$cnt" >> "$tmp_cache"
+                                fi
+                            done < "$zip_counts_file"
+                            mv "$tmp_cache" "$zip_counts_file" 2>/dev/null
+                            # Update systems menu
+                            : > "$systems_menu"
+                            while IFS=':' read -r name cnt; do
+                                [ "$cnt" -gt 0 ] && echo "$name ($cnt ZIP files)" >> "$systems_menu"
+                            done < "$zip_counts_file"
+                            printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
+                        } || {
+                            kill $MESSAGE_PID 2>/dev/null
+                            echo "Error: Failed to delete $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                            show_message "Error: Failed to delete $rom_name." 2
+                            sleep 1
+                            echo "  Action: Failed to delete $rom_name" >> "$ZIP_ROMS_FILE"
+                        }
+                    else
+                        echo "User cancelled deletion of $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                        echo "  Action: Skipped $rom_name (cancelled deletion)" >> "$ZIP_ROMS_FILE"
+                        skipped_count=$((skipped_count + 1))
+                    fi
+                    ;;
+                "Skip ZIP")
+                    echo "Skipped $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                    echo "  Action: Skipped $rom_name" >> "$ZIP_ROMS_FILE"
+                    skipped_count=$((skipped_count + 1))
+                    ;;
+                *)
+                    echo "Error: Invalid action for $rom_name: $action" >> "$LOGS_PATH/Rom Inspector.txt"
+                    show_message "Error: Invalid action for $rom_name." 2
+                    sleep 1
+                    echo "  Action: Skipped $rom_name (invalid action)" >> "$ZIP_ROMS_FILE"
+                    skipped_count=$((skipped_count + 1))
+                    ;;
+            esac
+        done
+        rm -f "$roms_menu" 2>/dev/null
+    done
+
+    # Final summary
+    zip_summary=""
+    if [ -s "$zip_counts_file" ]; then
+        while IFS=':' read -r sys_name count; do
+            [ "$count" -gt 0 ] && zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+        done < "$zip_counts_file"
+        zip_summary=$(echo "$zip_summary" | sed 's/;$//' | sed 's/;/ - /g')
+    fi
+
+    echo "ZIP ROM check completed. Found: $zip_count, Decompressed: $decompressed_count, Deleted: $deleted_count, Skipped: $skipped_count" >> "$LOGS_PATH/Rom Inspector.txt"
+    [ -n "$zip_summary" ] && {
+        echo "Final ZIP ROMs Summary: $zip_summary" >> "$LOGS_PATH/Rom Inspector.txt"
+        echo "Final ZIP ROMs Summary: $zip_summary" >> "$ZIP_ROMS_FILE"
+    }
+    echo "Summary: Found: $zip_count, Decompressed: $decompressed_count, Deleted: $deleted_count, Skipped: $skipped_count" >> "$ZIP_ROMS_FILE"
+    show_message "Results saved in /mnt/SDCARD/zip_roms_report.txt" 3
+    sleep 0
+    rm -rf "$systems_menu" "$zip_action_menu" "$keep_zip_menu" "$zip_counts_file" "$roms_cache_dir" "$cache_file" 2>/dev/null
+}
+
+check_roms_sizes() {
     ROMS_DIR="/mnt/SDCARD/Roms"
     OUTPUT_FILE="$ROM_SIZES_FILE"
     MAX_FILES=1000  # Limite du nombre de fichiers à traiter pour éviter la surcharge
@@ -593,6 +1324,7 @@ remove_duplicate_roms() {
 
     show_message "Scanning for duplicate ROMs..." forever
     LOADING_PID=$!
+	sleep 0.5  # Ensure message is fully displayed before heavy operations
 
     if [ ! -d "$ROMS_DIR" ] || [ ! -r "$ROMS_DIR" ]; then
         stop_loading
@@ -914,70 +1646,74 @@ statistics() {
 
         case "$selected_line" in
             "View total ROMs per system")
-                show_message "Loading total ROMs per system..." forever
-                LOADING_PID=$!
+    show_message "Loading total ROMs per system..." forever
+    LOADING_PID=$!
 
-                > /tmp/total_roms.menu || {
-                    stop_loading
-                    echo "Error: Failed to create /tmp/total_roms.menu" >> "$LOGS_PATH/Rom Inspector.txt"
-                    show_message "Error: Failed to create total ROMs menu." 5
-                    return 1
-                }
+    > /tmp/total_roms.menu || {
+        stop_loading
+        echo "Error: Failed to create /tmp/total_roms.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to create total ROMs menu." 5
+        return 1
+    }
 
-                TOTAL_ROM_COUNT=0
-                VALID_SYSTEMS_FOUND=0
+    TOTAL_ROM_COUNT=0
+    VALID_SYSTEMS_FOUND=0
 
-                for SYS_PATH in "$ROMS_DIR"/*; do
-                    [ -d "$SYS_PATH" ] || continue
-                    [ -r "$SYS_PATH" ] || continue
-                    SYS_NAME="${SYS_PATH##*/}"
-                    case "$SYS_NAME" in
-                        .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
-                    esac
+    for SYS_PATH in "$ROMS_DIR"/*; do
+        [ -d "$SYS_PATH" ] || continue
+        [ -r "$SYS_PATH" ] || continue
+        SYS_NAME="${SYS_PATH##*/}"
+        case "$SYS_NAME" in
+            .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
+        esac
 
-                    VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
-                    [ -z "$VALID_EXTENSIONS" ] && continue
+        VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+        [ -z "$VALID_EXTENSIONS" ] && continue
 
-                    ROM_COUNT=0
-                    for ROM in "$SYS_PATH"/*; do
-                        [ -f "$ROM" ] && [ -r "$ROM" ] || continue
-                        ROM_BASENAME="${ROM##*/}"
-                        case "$ROM_BASENAME" in
-                            .*) continue ;;
-                            *.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
-                        esac
-                        if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
-                            ROM_COUNT=$((ROM_COUNT + 1))
-                        fi
-                    done
+        ROM_COUNT=0
+        for ROM in "$SYS_PATH"/*; do
+            [ -f "$ROM" ] && [ -r "$ROM" ] || continue
+            ROM_BASENAME="${ROM##*/}"
+            case "$ROM_BASENAME" in
+                .*) continue ;;
+                *.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
+            esac
+            if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
+                ROM_COUNT=$((ROM_COUNT + 1))
+            fi
+        done
 
-                    [ "$ROM_COUNT" -eq 0 ] && continue
+        [ "$ROM_COUNT" -eq 0 ] && continue
 
-                    echo "$SYS_NAME - $ROM_COUNT ROM(s)" >> /tmp/total_roms.menu
-                    TOTAL_ROM_COUNT=$((TOTAL_ROM_COUNT + ROM_COUNT))
-                    VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
-                done
+        if [ "$ROM_COUNT" -eq 1 ]; then
+            echo "$SYS_NAME - $ROM_COUNT ROM" >> /tmp/total_roms.menu
+        else
+            echo "$SYS_NAME - $ROM_COUNT ROMs" >> /tmp/total_roms.menu
+        fi
+        TOTAL_ROM_COUNT=$((TOTAL_ROM_COUNT + ROM_COUNT))
+        VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
+    done
 
-                echo "Total ROMs: $TOTAL_ROM_COUNT" >> /tmp/total_roms.menu
+    echo "Total ROMs: $TOTAL_ROM_COUNT" >> /tmp/total_roms.menu
 
-                if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
-                    stop_loading
-                    echo "Error: No valid systems with ROMs found." >> "$LOGS_PATH/Rom Inspector.txt"
-                    show_message "Error: No valid systems found." 5
-                    return 1
-                fi
+    if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
+        stop_loading
+        echo "Error: No valid systems with ROMs found." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: No valid systems found." 5
+        return 1
+    fi
 
-                stop_loading
+    stop_loading
 
-                minui-list --disable-auto-sleep \
-                    --item-key total_roms \
-                    --file /tmp/total_roms.menu \
-                    --format text \
-                    --cancel-text "BACK" \
-                    --title "Total ROMs per System" \
-                    --write-location /tmp/minui-output \
-                    --write-value state
-                ;;
+    minui-list --disable-auto-sleep \
+        --item-key total_roms \
+        --file /tmp/total_roms.menu \
+        --format text \
+        --cancel-text "BACK" \
+        --title "Total ROMs per System" \
+        --write-location /tmp/minui-output \
+        --write-value state
+    ;;
             "View percentage of ROMs with covers")
                 show_message "Loading percentage of ROMs with covers..." forever
                 LOADING_PID=$!
@@ -1232,6 +1968,9 @@ analyze_disk_usage() {
     MAX_FILES=10000  # Global limit to avoid overload
     MIN_ROM_SIZE=$((1 * 1024 * 1024))  # 1 MB in bytes
 
+    # Set up cleanup for temporary files
+    trap 'rm -f "$TEMP_SYSTEMS_FILE" /tmp/disk_usage.menu /tmp/minui-output 2>/dev/null' EXIT
+
     # Determine if NextUI is used
     is_nextui=false
     image_folder=".media"
@@ -1275,6 +2014,7 @@ analyze_disk_usage() {
 
     TOTAL_SIZE=0
     VALID_SYSTEMS_FOUND=0
+    TEMP_SYSTEMS_FILE=$(mktemp)  # Temporary file to store system sizes
 
     for SYS_PATH in "$ROMS_DIR"/*; do
         [ -d "$SYS_PATH" ] || continue
@@ -1299,26 +2039,25 @@ analyze_disk_usage() {
         FILE_COUNT=0
 
         # Calculate ROMs size
-        for ROM in "$SYS_PATH"/*; do
-            [ -f "$ROM" ] && [ -r "$ROM" ] || continue
+        while IFS= read -r -d '' ROM; do
             ROM_BASENAME="${ROM##*/}"
             case "$ROM_BASENAME" in
                 .*|*.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
             esac
             if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
                 SIZE=$(stat -c%s "$ROM" 2>/dev/null || echo 0)
-                if [ "$SIZE" -eq 0 ]; then
+                [ "$SIZE" -eq 0 ] && {
                     echo "Warning: Failed to get size for $ROM" >> "$LOGS_PATH/Rom Inspector.txt"
                     continue
-                fi
+                }
                 ROM_SIZE=$((ROM_SIZE + SIZE))
                 FILE_COUNT=$((FILE_COUNT + 1))
-                if [ "$FILE_COUNT" -gt "$MAX_FILES" ]; then
+                [ "$FILE_COUNT" -gt "$MAX_FILES" ] && {
                     echo "Warning: Too many files in $SYS_NAME, limiting to $MAX_FILES" >> "$LOGS_PATH/Rom Inspector.txt"
                     break
-                fi
+                }
             fi
-        done
+        done < <(find "$SYS_PATH" -maxdepth 1 -type f -print0)
 
         # Skip systems with less than 1 MB of ROMs
         if [ "$ROM_SIZE" -lt "$MIN_ROM_SIZE" ]; then
@@ -1329,262 +2068,132 @@ analyze_disk_usage() {
         # Calculate covers size
         MEDIA_PATH="$SYS_PATH/$image_folder"
         if [ -d "$MEDIA_PATH" ] && [ -r "$MEDIA_PATH" ]; then
-            for COVER in "$MEDIA_PATH"/*.png; do
-                [ -f "$COVER" ] && [ -r "$COVER" ] || continue
+            while IFS= read -r -d '' COVER; do
                 SIZE=$(stat -c%s "$COVER" 2>/dev/null || echo 0)
-                if [ "$SIZE" -eq 0 ]; then
+                [ "$SIZE" -eq 0 ] && {
                     echo "Warning: Failed to get size for $COVER" >> "$LOGS_PATH/Rom Inspector.txt"
                     continue
-                fi
+                }
                 COVER_SIZE=$((COVER_SIZE + SIZE))
-            done
+            done < <(find "$MEDIA_PATH" -maxdepth 1 -type f -name "*.png" -print0)
         fi
 
         TOTAL_SYSTEM_SIZE=$((ROM_SIZE + COVER_SIZE))
         if [ "$TOTAL_SYSTEM_SIZE" -gt 0 ]; then
-            ROM_SIZE_HUMAN=$(echo $ROM_SIZE | awk '{printf "%.1f%s", $1/1024/1024, "M"}')
-            COVER_SIZE_HUMAN=$(echo $COVER_SIZE | awk '{printf "%.1f%s", $1/1024/1024, "M"}')
-            TOTAL_SYSTEM_SIZE_HUMAN=$(echo $TOTAL_SYSTEM_SIZE | awk '{printf "%.1f%s", $1/1024/1024, "M"}')
-            echo "$SYS_NAME - $TOTAL_SYSTEM_SIZE_HUMAN (ROMs: $ROM_SIZE_HUMAN, Covers: $COVER_SIZE_HUMAN)" >> /tmp/disk_usage.menu
+            ROM_SIZE_HUMAN=$(echo $ROM_SIZE | awk '{printf "%.1f", $1/1024/1024}')
+            COVER_SIZE_HUMAN=$(echo $COVER_SIZE | awk '{printf "%.1f", $1/1024/1024}')
+            TOTAL_SYSTEM_SIZE_HUMAN=$(echo $TOTAL_SYSTEM_SIZE | awk '{printf "%.1f", $1/1024/1024}')
+            echo "$SYS_NAME - ${TOTAL_SYSTEM_SIZE_HUMAN} Mb" >> /tmp/disk_usage.menu
+            echo "$SYS_NAME|$ROM_SIZE_HUMAN|$COVER_SIZE_HUMAN|$TOTAL_SYSTEM_SIZE_HUMAN" >> "$TEMP_SYSTEMS_FILE"
             VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
             TOTAL_SIZE=$((TOTAL_SIZE + TOTAL_SYSTEM_SIZE))
 
             echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
-            echo "ROMs Size: $ROM_SIZE_HUMAN" >> "$OUTPUT_FILE"
-            echo "Covers Size: $COVER_SIZE_HUMAN" >> "$OUTPUT_FILE"
-            echo "Total Size: $TOTAL_SYSTEM_SIZE_HUMAN" >> "$OUTPUT_FILE"
+            echo "ROMs Size: ${ROM_SIZE_HUMAN} Mb" >> "$OUTPUT_FILE"
+            echo "Covers Size: ${COVER_SIZE_HUMAN} Mb" >> "$OUTPUT_FILE"
+            echo "Total Size: ${TOTAL_SYSTEM_SIZE_HUMAN} Mb" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
         fi
     done
 
-    TOTAL_SIZE_HUMAN=$(echo $TOTAL_SIZE | awk '{printf "%.1f%s", $1/1024/1024, "M"}')
-    echo "Total Disk Usage: $TOTAL_SIZE_HUMAN" >> /tmp/disk_usage.menu
-    echo "Total Disk Usage: $TOTAL_SIZE_HUMAN" >> "$OUTPUT_FILE"
+    TOTAL_SIZE_HUMAN=$(echo $TOTAL_SIZE | awk '{printf "%.1f", $1/1024/1024}')
+    echo "Total Disk Usage: ${TOTAL_SIZE_HUMAN} Mb" >> /tmp/disk_usage.menu
+    echo "Total Disk Usage: ${TOTAL_SIZE_HUMAN} Mb" >> "$OUTPUT_FILE"
 
     stop_loading
 
     if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
         echo "No systems with valid ROMs found." >> "$LOGS_PATH/Rom Inspector.txt"
-        echo "No systems with valid ROMs found." >> "$OUTPUT_FILE"
         show_message "No valid systems found." 5
         return 1
     fi
 
     echo "Disk usage analysis completed. Systems found: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
+    echo "Contents of /tmp/disk_usage.menu:" >> "$LOGS_PATH/Rom Inspector.txt"
     cat /tmp/disk_usage.menu >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "Error: Failed to read /tmp/disk_usage.menu" >> "$LOGS_PATH/Rom Inspector.txt"
 
-    minui-list --disable-auto-sleep \
-        --item-key disk_usage \
-        --file /tmp/disk_usage.menu \
-        --format text \
-        --cancel-text "BACK" \
-        --title "Disk Usage per System" \
-        --write-location /tmp/minui-output \
-        --write-value state
-
-    show_message "Disk usage report saved to $OUTPUT_FILE" 5
-    return 0
-}
-
-list_missing_covers() {
-    ROMS_DIR="/mnt/SDCARD/Roms"
-    OUTPUT_FILE="$EXPORT_FILE"
-    MAX_FILES=1000  # Global limit to avoid overload
-
-    # Determine if NextUI is used
-    is_nextui=false
-    image_folder=".media"
-    if [ "$IS_NEXT" = "true" ] || [ "$IS_NEXT" = "yes" ] || [ -f "$USERDATA_PATH/minuisettings.txt" ]; then
-        is_nextui=true
-    else
-        image_folder=".res"
-    fi
-    echo "Using image folder: $image_folder (is_nextui: $is_nextui)" >> "$LOGS_PATH/Rom Inspector.txt"
-
-    show_message "Scanning for missing covers..." forever
-    LOADING_PID=$!
-
-    if [ ! -d "$ROMS_DIR" ] || [ ! -r "$ROMS_DIR" ]; then
-        stop_loading
-        echo "Error: ROMS_DIR ($ROMS_DIR) does not exist or is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: ROMs directory not found or not readable." 5
-        return 1
-    fi
-
-    if [ ! -w "/mnt/SDCARD" ]; then
-        stop_loading
-        echo "Error: No write access to /mnt/SDCARD." >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: Cannot write to /mnt/SDCARD." 5
-        return 1
-    fi
-
-    echo "=== Missing Covers Report ===" > "$OUTPUT_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt" || {
-        stop_loading
-        echo "Error: Failed to initialize $OUTPUT_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: Failed to create missing_covers.txt." 5
-        return 1
-    }
-
-    > /tmp/roms_missing.menu || {
-        stop_loading
-        echo "Error: Failed to create /tmp/roms_missing.menu" >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: Failed to create menu file." 5
-        return 1
-    }
-    VALID_SYSTEMS_FOUND=0
-    TOTAL_MISSING_COUNT=0
-
-    for SYS_PATH in "$ROMS_DIR"/*; do
-        [ -d "$SYS_PATH" ] || continue
-        [ -r "$SYS_PATH" ] || {
-            echo "Warning: Directory $SYS_PATH is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
-            continue
-        }
-        SYS_NAME="${SYS_PATH##*/}"
-        case "$SYS_NAME" in
-            .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
-        esac
-
-        VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
-        [ -z "$VALID_EXTENSIONS" ] && {
-            echo "Skipping $SYS_NAME: No valid extensions defined." >> "$LOGS_PATH/Rom Inspector.txt"
-            continue
-        }
-
-        echo "Scanning system: $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
-        MEDIA_PATH="$SYS_PATH/$image_folder"
-        ROM_COUNT=0
-        MISSING_COUNT=0
-        TEMP_FILE=$(mktemp)
-        FILE_COUNT=0
-
-        mkdir -p "$SYS_PATH/.cache" 2>/dev/null || {
-            echo "Warning: Failed to create cache directory $SYS_PATH/.cache" >> "$LOGS_PATH/Rom Inspector.txt"
-        }
-
-        for ROM in "$SYS_PATH"/*; do
-            [ -f "$ROM" ] && [ -r "$ROM" ] || continue
-            ROM_BASENAME="${ROM##*/}"
-            case "$ROM_BASENAME" in
-                .*|*.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
-            esac
-            if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
-                ROM_COUNT=$((ROM_COUNT + 1))
-                COVER_FILE="$MEDIA_PATH/${ROM_BASENAME%.*}.png"
-                if [ ! -f "$COVER_FILE" ] || [ ! -s "$COVER_FILE" ]; then
-                    MISSING_COUNT=$((MISSING_COUNT + 1))
-                    echo "$ROM_BASENAME" >> "$TEMP_FILE"
-                    echo "Missing cover for: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
-                else
-                    echo "Found cover for: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
-                fi
-            fi
-            FILE_COUNT=$((FILE_COUNT + 1))
-            if [ "$FILE_COUNT" -gt "$MAX_FILES" ]; then
-                echo "Warning: Too many files in $SYS_NAME, limiting to $MAX_FILES" >> "$LOGS_PATH/Rom Inspector.txt"
-                break
-            fi
-        done
-
-        if [ "$MISSING_COUNT" -gt 0 ]; then
-            echo "$SYS_NAME - $MISSING_COUNT missing cover(s)" >> /tmp/roms_missing.menu
-            VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
-            TOTAL_MISSING_COUNT=$((TOTAL_MISSING_COUNT + MISSING_COUNT))
-            echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
-            echo "Missing covers: $MISSING_COUNT" >> "$OUTPUT_FILE"
-            cat "$TEMP_FILE" >> "$OUTPUT_FILE"
-            echo "" >> "$OUTPUT_FILE"
-            mv "$TEMP_FILE" "$SYS_PATH/.cache/missing_covers.txt" 2>/dev/null || {
-                echo "Warning: Failed to save missing covers list to $SYS_PATH/.cache/missing_covers.txt" >> "$LOGS_PATH/Rom Inspector.txt"
-                rm -f "$TEMP_FILE"
-            }
-        else
-            echo "No missing covers for $SYS_NAME (total ROMs: $ROM_COUNT)" >> "$LOGS_PATH/Rom Inspector.txt"
-            rm -f "$TEMP_FILE"
-        fi
-    done
-
-    stop_loading
-
-    if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
-        echo "No systems with missing covers found." >> "$LOGS_PATH/Rom Inspector.txt"
-        echo "No missing covers found." >> "$OUTPUT_FILE"
-        show_message "No missing covers found." 5
-        return 0
-    fi
-
-    echo "Systems with missing covers: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
-    echo "Total missing covers: $TOTAL_MISSING_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
-    cat /tmp/roms_missing.menu >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "Error: Failed to read /tmp/roms_missing.menu" >> "$LOGS_PATH/Rom Inspector.txt"
-
-    if [ ! -s /tmp/roms_missing.menu ]; then
-        echo "Error: /tmp/roms_missing.menu is empty or does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: Failed to generate systems menu." 5
+    if [ ! -s /tmp/disk_usage.menu ]; then
+        echo "Error: /tmp/disk_usage.menu is empty" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: No systems available to display." 5
         return 1
     fi
 
     while true; do
+        # Ensure menu file is intact before launching
+        if [ ! -s /tmp/disk_usage.menu ]; then
+            echo "Error: /tmp/disk_usage.menu is empty or missing" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "Error: Menu file is corrupted." 5
+            return 1
+        fi
+
+        # Clear previous minui-output to prevent stale data
+        rm -f /tmp/minui-output 2>/dev/null
+
+        echo "Launching minui-list for disk usage menu" >> "$LOGS_PATH/Rom Inspector.txt"
         minui-list --disable-auto-sleep \
-            --item-key missing_covers \
-            --file /tmp/roms_missing.menu \
+            --item-key disk_usage \
+            --file /tmp/disk_usage.menu \
             --format text \
             --cancel-text "BACK" \
-            --title "Systems with Missing Covers" \
+            --title "Disk Usage per System" \
             --write-location /tmp/minui-output \
             --write-value state
         MINUI_EXIT_CODE=$?
 
+        echo "minui-list exited with code: $MINUI_EXIT_CODE" >> "$LOGS_PATH/Rom Inspector.txt"
         if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
-            echo "User cancelled systems menu (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
-            break
+            echo "User cancelled disk usage menu or minui-list failed (exit code: $MINUI_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+            # Option 1: Return to parent menu (current behavior, matches log)
+            return 0
+            # Option 2: Stay in system list menu (uncomment to use)
+            # continue
         fi
+
         if [ ! -f /tmp/minui-output ]; then
             echo "Error: minui-list output file /tmp/minui-output not found" >> "$LOGS_PATH/Rom Inspector.txt"
-            show_message "Error: Failed to read menu output." 5
-            break
+            continue
         fi
 
         idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+        echo "Selected index: $idx" >> "$LOGS_PATH/Rom Inspector.txt"
         if [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ]; then
             echo "Invalid or no selection: idx=$idx" >> "$LOGS_PATH/Rom Inspector.txt"
-            break
+            continue
         fi
 
-        selected_line=$(sed -n "$((idx + 1))p" /tmp/roms_missing.menu 2>/dev/null)
+        selected_line=$(sed -n "$((idx + 1))p" /tmp/disk_usage.menu 2>/dev/null)
         selected_sys=$(echo "$selected_line" | sed -E 's/ - (.*)$//')
+        echo "Selected system: $selected_sys" >> "$LOGS_PATH/Rom Inspector.txt"
 
-        SYS_PATH="/mnt/SDCARD/Roms/$selected_sys"
-        MISSING_COVERS_FILE="$SYS_PATH/.cache/missing_covers.txt"
-
-        if [ ! -f "$MISSING_COVERS_FILE" ] || [ ! -s "$MISSING_COVERS_FILE" ]; then
-            echo "Error: Missing covers file not found or empty for $selected_sys: $MISSING_COVERS_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
-            show_message "No missing covers found for $selected_sys." 5
+        if [ "$selected_sys" = "Total Disk Usage" ]; then
+            show_message "Total Disk Usage: ${TOTAL_SIZE_HUMAN} Mb" 5 || {
+                echo "Warning: show_message failed for Total Disk Usage" >> "$LOGS_PATH/Rom Inspector.txt"
+            }
             continue
         fi
 
-        show_message "Loading missing covers for $selected_sys..." forever
-        LOADING_PID=$!
-
-        minui-list --disable-auto-sleep \
-            --item-key missing_cover_items \
-            --file "$MISSING_COVERS_FILE" \
-            --format text \
-            --cancel-text "BACK" \
-            --title "Missing Covers for $selected_sys" \
-            --write-location /tmp/minui-output \
-            --write-value state
-        MINUI_EXIT_CODE=$?
-
-        stop_loading
-
-        if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
-            echo "User cancelled ROMs menu for $selected_sys (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
+        system_details=$(grep "^$selected_sys|" "$TEMP_SYSTEMS_FILE" 2>/dev/null)
+        if [ -z "$system_details" ]; then
+            echo "Error: No details found for $selected_sys in $TEMP_SYSTEMS_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
             continue
         fi
+
+        ROM_SIZE_HUMAN=$(echo "$system_details" | cut -d'|' -f2)
+        COVER_SIZE_HUMAN=$(echo "$system_details" | cut -d'|' -f3)
+        TOTAL_SIZE_HUMAN=$(echo "$system_details" | cut -d'|' -f4)
+
+        # Use printf to format the message with actual newlines (unchanged as requested)
+        DETAIL_MESSAGE=$(printf "%s:\nROMs: %s Mb\nCovers: %s Mb\nTotal: %s Mb" \
+            "$selected_sys" "$ROM_SIZE_HUMAN" "$COVER_SIZE_HUMAN" "$TOTAL_SIZE_HUMAN")
+        echo "Attempting to display details for $selected_sys: $DETAIL_MESSAGE" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "$DETAIL_MESSAGE" 5 || {
+            echo "Warning: show_message failed to display details for $selected_sys" >> "$LOGS_PATH/Rom Inspector.txt"
+            continue
+        }
+        echo "Displayed details for $selected_sys: ROMs: $ROM_SIZE_HUMAN Mb, Covers: $COVER_SIZE_HUMAN Mb, Total: $TOTAL_SIZE_HUMAN Mb" >> "$LOGS_PATH/Rom Inspector.txt"
     done
 
-    echo "Exiting list_missing_covers function" >> "$LOGS_PATH/Rom Inspector.txt"
-    show_message "Missing covers report saved to $OUTPUT_FILE" 5
+    show_message "Disk usage report saved to $OUTPUT_FILE" 5
     return 0
 }
 
@@ -1687,11 +2296,17 @@ list_orphaned_files() {
         fi
 
         if [ "$ORPHANED_COUNT" -gt 0 ]; then
-            echo "$SYS_NAME - $ORPHANED_COUNT orphaned file(s)" >> /tmp/roms_orphaned.menu
+            if [ "$ORPHANED_COUNT" -eq 1 ]; then
+                echo "$SYS_NAME - $ORPHANED_COUNT orphaned file" >> /tmp/roms_orphaned.menu
+                echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+                echo "Orphaned file: $ORPHANED_COUNT" >> "$OUTPUT_FILE"
+            else
+                echo "$SYS_NAME - $ORPHANED_COUNT orphaned files" >> /tmp/roms_orphaned.menu
+                echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+                echo "Orphaned files: $ORPHANED_COUNT" >> "$OUTPUT_FILE"
+            fi
             VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
             TOTAL_ORPHANED_COUNT=$((TOTAL_ORPHANED_COUNT + ORPHANED_COUNT))
-            echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
-            echo "Orphaned files: $ORPHANED_COUNT" >> "$OUTPUT_FILE"
             cat "$TEMP_FILE" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
             mv "$TEMP_FILE" "$SYS_PATH/.cache/orphaned_files.txt" 2>/dev/null || {
@@ -1822,7 +2437,11 @@ list_orphaned_files() {
                     if [ -s "$ORPHANED_FILES_FILE" ]; then
                         NEW_ORPHANED_COUNT=$(wc -l < "$ORPHANED_FILES_FILE")
                         echo "Updated orphaned count for $selected_sys: $NEW_ORPHANED_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
-                        sed -i "/^$selected_sys - /c\\$selected_sys - $NEW_ORPHANED_COUNT orphaned file(s)" /tmp/roms_orphaned.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                        if [ "$NEW_ORPHANED_COUNT" -eq 1 ]; then
+                            sed -i "/^$selected_sys - /c\\$selected_sys - $NEW_ORPHANED_COUNT orphaned file" /tmp/roms_orphaned.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                        else
+                            sed -i "/^$selected_sys - /c\\$selected_sys - $NEW_ORPHANED_COUNT orphaned files" /tmp/roms_orphaned.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                        fi
                     else
                         echo "No more orphaned files for $selected_sys, removing from menu" >> "$LOGS_PATH/Rom Inspector.txt"
                         sed -i "/^$selected_sys - /d" /tmp/roms_orphaned.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
@@ -2088,17 +2707,623 @@ verify_cover_resolutions() {
     return 0
 }
 
+check_roms_names() {
+    ROMS_DIR="/mnt/SDCARD/Roms"
+    OUTPUT_FILE="$ROM_NAMES_FILE"
+    MAX_FILES=3000  # Global limit to avoid overload
+
+    show_message "Scanning ROMs.. This may take a moment!" forever
+    LOADING_PID=$!
+
+    # Clear previous log
+    echo "=== ROM Names Inspection - New Run ===" > "$LOGS_PATH/Rom Inspector.txt"
+
+    if [ ! -d "$ROMS_DIR" ] || [ ! -r "$ROMS_DIR" ]; then
+        stop_loading
+        echo "Error: ROMS_DIR ($ROMS_DIR) does not exist or is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: ROMs directory not found or not readable." 5
+        return 1
+    fi
+
+    if [ ! -w "/mnt/SDCARD" ]; then
+        stop_loading
+        echo "Error: No write access to /mnt/SDCARD." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Cannot write to /mnt/SDCARD." 5
+        return 1
+    fi
+
+    echo "=== ROM Names Report ===" > "$OUTPUT_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt" || {
+        stop_loading
+        echo "Error: Failed to initialize $OUTPUT_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to create rom_names_report.txt." 5
+        return 1
+    }
+
+    > /tmp/rom_names.menu || {
+        stop_loading
+        echo "Error: Failed to create /tmp/rom_names.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to create menu file." 5
+        return 1
+    }
+
+    VALID_SYSTEMS_FOUND=0
+    TOTAL_PROBLEMATIC_NAMES=0
+    # Simplified pattern to catch special characters and multiple spaces
+    PROBLEMATIC_PATTERN='[][#$%*+?=|<>@;{}"]|^\s+|\s{2,}'
+
+    # Process each system directory
+    for SYS_PATH in "$ROMS_DIR"/*; do
+        [ -d "$SYS_PATH" ] || continue
+        [ -r "$SYS_PATH" ] || {
+            echo "Warning: Directory $SYS_PATH is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
+            continue
+        }
+        
+        SYS_NAME="${SYS_PATH##*/}"
+        case "$SYS_NAME" in
+            .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") 
+                echo "Skipping system: $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                continue 
+                ;;
+        esac
+
+        echo "=== Processing System: $SYS_NAME ===" >> "$LOGS_PATH/Rom Inspector.txt"
+        
+        # Get valid extensions with fallback
+        VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+        if [ -z "$VALID_EXTENSIONS" ]; then
+            VALID_EXTENSIONS="zip|7z|gba|gb|gbc|nes|sfc|smc|md|gen|gg|sms|pce|iso|cue|bin|ngp|ngc|v64|z64|n64|a26|col|cpr|d64|t64|tap|prg|p00|cr|dsk|j64|cdt|scl|trd|sc|fds|lnx|msa|st|dim|ipf|ctr|32x|a52|jag|wsc|pce|sg|mv|cpc|cdt|dsk|rom"
+            echo "Using fallback extensions for $SYS_NAME: $VALID_EXTENSIONS" >> "$LOGS_PATH/Rom Inspector.txt"
+        else
+            echo "Using system extensions for $SYS_NAME: $VALID_EXTENSIONS" >> "$LOGS_PATH/Rom Inspector.txt"
+        fi
+
+        PROBLEMATIC_COUNT=0
+        TEMP_FILE=$(mktemp)
+        FILE_COUNT=0
+
+        # Find all ROMs in the system directory and process them safely
+        while IFS= read -r ROM; do
+            [ -f "$ROM" ] && [ -r "$ROM" ] || {
+                echo "DEBUG: Skipping unreadable file: $ROM" >> "$LOGS_PATH/Rom Inspector.txt"
+                continue
+            }
+            ROM_BASENAME="${ROM##*/}"
+            
+            # Skip hidden files and specific extensions
+            case "$ROM_BASENAME" in
+                .*) 
+                    echo "DEBUG: Skipping hidden file: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                    continue 
+                    ;;
+                *.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) 
+                    echo "DEBUG: Skipping excluded extension: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                    continue 
+                    ;;
+            esac
+            
+            if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
+                ROM_NAME="${ROM_BASENAME%.*}"
+                
+                if echo "$ROM_NAME" | grep -E "$PROBLEMATIC_PATTERN" >/dev/null; then
+                    PROBLEMATIC_COUNT=$((PROBLEMATIC_COUNT + 1))
+                    echo "$ROM_BASENAME" >> "$TEMP_FILE"
+                    echo "PROBLEMATIC: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                fi
+                
+                FILE_COUNT=$((FILE_COUNT + 1))
+                if [ "$FILE_COUNT" -gt "$MAX_FILES" ]; then
+                    echo "Warning: Too many files in $SYS_NAME, limiting to $MAX_FILES" >> "$LOGS_PATH/Rom Inspector.txt"
+                    break
+                fi
+            fi
+        done < <(find "$SYS_PATH" -maxdepth 1 -type f)
+
+        if [ "$PROBLEMATIC_COUNT" -gt 0 ]; then
+            VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
+            TOTAL_PROBLEMATIC_NAMES=$((TOTAL_PROBLEMATIC_NAMES + PROBLEMATIC_COUNT))
+            if [ "$PROBLEMATIC_COUNT" -eq 1 ]; then
+                echo "$SYS_NAME - 1 problematic name" >> /tmp/rom_names.menu
+            else
+                echo "$SYS_NAME - $PROBLEMATIC_COUNT problematic names" >> /tmp/rom_names.menu
+            fi
+            echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+            echo "Problematic ROM names: $PROBLEMATIC_COUNT" >> "$OUTPUT_FILE"
+            cat "$TEMP_FILE" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+            
+            mkdir -p "$SYS_PATH/.cache" 2>/dev/null
+            if mv "$TEMP_FILE" "$SYS_PATH/.cache/problematic_names.txt" 2>/dev/null; then
+                echo "Saved problematic names list to $SYS_PATH/.cache/problematic_names.txt" >> "$LOGS_PATH/Rom Inspector.txt"
+            else
+                echo "Warning: Failed to save problematic names list" >> "$LOGS_PATH/Rom Inspector.txt"
+                rm -f "$TEMP_FILE"
+            fi
+        else
+            rm -f "$TEMP_FILE"
+            echo "No problematic ROM names found for $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+        fi
+    done
+
+    stop_loading
+
+    if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
+        echo "No systems with problematic ROM names found." >> "$LOGS_PATH/Rom Inspector.txt"
+        echo "No problematic ROM names found." >> "$OUTPUT_FILE"
+        show_message "No problematic ROM names found." 5
+        return 0
+    fi
+
+    echo "Systems with problematic ROM names: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
+    echo "Total problematic ROM names: $TOTAL_PROBLEMATIC_NAMES" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    if [ ! -s /tmp/rom_names.menu ]; then
+        echo "Error: /tmp/rom_names.menu is empty or does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to generate systems menu." 5
+        return 1
+    fi
+
+    while true; do
+        rm -f /tmp/minui-output 2>/dev/null
+        minui-list --disable-auto-sleep \
+            --item-key rom_names \
+            --file /tmp/rom_names.menu \
+            --format text \
+            --cancel-text "BACK" \
+            --title "Systems with Problematic ROM Names" \
+            --write-location /tmp/minui-output \
+            --write-value state
+        MINUI_EXIT_CODE=$?
+
+        if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+            echo "User cancelled systems menu (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
+            break
+        fi
+        if [ ! -f /tmp/minui-output ]; then
+            echo "Error: minui-list output file /tmp/minui-output not found" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "Error: Failed to read menu output." 5
+            break
+        fi
+
+        idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+        if [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ]; then
+            echo "Invalid or no selection: idx=$idx" >> "$LOGS_PATH/Rom Inspector.txt"
+            break
+        fi
+
+        selected_line=$(sed -n "$((idx + 1))p" /tmp/rom_names.menu 2>/dev/null)
+        selected_sys=$(echo "$selected_line" | sed -E 's/ - (.*)$//')
+
+        SYS_PATH="/mnt/SDCARD/Roms/$selected_sys"
+        PROBLEMATIC_NAMES_FILE="$SYS_PATH/.cache/problematic_names.txt"
+
+        if [ ! -f "$PROBLEMATIC_NAMES_FILE" ] || [ ! -s "$PROBLEMATIC_NAMES_FILE" ]; then
+            echo "Error: Problematic names list not found or empty for $selected_sys: $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "No problematic ROM names found for $selected_sys." 5
+            # Remove the system from the menu if the file is empty or missing
+            sed -i "/^$selected_sys - /d" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+            echo "Removed $selected_sys from rom_names.menu due to empty/missing problematic names file" >> "$LOGS_PATH/Rom Inspector.txt"
+            if [ ! -s /tmp/rom_names.menu ]; then
+                echo "No systems with problematic ROM names remain" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "No systems with problematic ROM names remain." 5
+                break
+            fi
+            continue
+        fi
+
+        while true; do
+            rm -f /tmp/minui-output 2>/dev/null
+            minui-list --disable-auto-sleep \
+                --item-key problematic_name_items \
+                --file "$PROBLEMATIC_NAMES_FILE" \
+                --format text \
+                --cancel-text "BACK" \
+                --title "Problematic ROM Names for $selected_sys" \
+                --write-location /tmp/minui-output \
+                --write-value state
+            MINUI_EXIT_CODE=$?
+
+            if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+                echo "User cancelled problematic names menu for $selected_sys (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
+                break
+            fi
+            if [ ! -f /tmp/minui-output ]; then
+                echo "Error: minui-list output file /tmp/minui-output not found for problematic names" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Failed to read menu output." 5
+                break
+            fi
+
+            file_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+            if [ "$file_idx" = "null" ] || [ -z "$file_idx" ] || [ "$file_idx" = "-1" ]; then
+                echo "Invalid or no selection for problematic name: idx=$file_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                break
+            fi
+
+            selected_file=$(sed -n "$((file_idx + 1))p" "$PROBLEMATIC_NAMES_FILE" 2>/dev/null)
+            if [ -z "$selected_file" ]; then
+                echo "Error: No file selected or invalid index: $file_idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Error: Invalid file selection." 5
+                break
+            fi
+
+            ROM_TO_RENAME="$SYS_PATH/$selected_file"
+            echo "Selected ROM for renaming/deletion: $ROM_TO_RENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+
+            # Create a menu for rename or delete options
+            > /tmp/rom_action.menu
+            echo "Automatic rename ROM" >> /tmp/rom_action.menu
+            echo "Delete ROM" >> /tmp/rom_action.menu
+            echo "Skip" >> /tmp/rom_action.menu
+
+            minui-list --disable-auto-sleep \
+                --item-key rom_action \
+                --file /tmp/rom_action.menu \
+                --format text \
+                --cancel-text "CANCEL" \
+                --title "Action for $selected_file" \
+                --write-location /tmp/minui-output \
+                --write-value state
+            ACTION_EXIT_CODE=$?
+
+            if [ "$ACTION_EXIT_CODE" -ne 0 ]; then
+                echo "User cancelled action menu for $selected_file" >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Action cancelled for $selected_file" 3
+                continue
+            fi
+
+            action_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+            action=$(sed -n "$((action_idx + 1))p" /tmp/rom_action.menu 2>/dev/null)
+
+            case "$action" in
+                "Automatic rename ROM")
+                    # Suggest a cleaned-up name (keep spaces, only replace special chars with _)
+                    SUGGESTED_NAME=$(echo "$selected_file" | sed -E 's/[][#$%*+?=|<>@;{}"]/_/g; s/_+/_/g; s/^_+|_+$//g; s/_/ /g; s/  +/ /g')
+                    echo "Suggested name for $selected_file: $SUGGESTED_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+
+                    # Create a confirmation menu
+                    > /tmp/rename_confirm.menu
+                    echo "Yes" >> /tmp/rename_confirm.menu
+                    echo "No" >> /tmp/rename_confirm.menu
+
+                    minui-list --disable-auto-sleep \
+                        --item-key rename_confirm \
+                        --file /tmp/rename_confirm.menu \
+                        --format text \
+                        --cancel-text "CANCEL" \
+                        --title "Rename $selected_file to $SUGGESTED_NAME?" \
+                        --write-location /tmp/minui-output \
+                        --write-value state
+                    CONFIRM_EXIT_CODE=$?
+
+                    if [ "$CONFIRM_EXIT_CODE" -ne 0 ]; then
+                        echo "User cancelled rename confirmation for $selected_file" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Rename cancelled for $selected_file" 3
+                        continue
+                    fi
+
+                    confirm_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+                    if [ "$confirm_idx" = "0" ]; then
+                        NEW_ROM_PATH="$SYS_PATH/$SUGGESTED_NAME"
+                        if mv "$ROM_TO_RENAME" "$NEW_ROM_PATH" 2>/dev/null; then
+                            echo "Renamed ROM: $ROM_TO_RENAME to $NEW_ROM_PATH" >> "$LOGS_PATH/Rom Inspector.txt"
+                            echo "System: $selected_sys" >> "$OUTPUT_FILE"
+                            echo "- Renamed: $selected_file to $SUGGESTED_NAME" >> "$OUTPUT_FILE"
+                            show_message "Renamed: $selected_file to $SUGGESTED_NAME" 3
+                            
+                            # Log the content of PROBLEMATIC_NAMES_FILE before update
+                            echo "DEBUG: Content of $PROBLEMATIC_NAMES_FILE before update:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            cat "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: File is empty or not found" >> "$LOGS_PATH/Rom Inspector.txt"
+                            # Log hex dump to detect invisible characters
+                            echo "DEBUG: Hex dump of $PROBLEMATIC_NAMES_FILE:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            xxd "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: Unable to perform hex dump" >> "$LOGS_PATH/Rom Inspector.txt"
+                            
+                            # Check write permissions for the .cache directory
+                            CACHE_DIR="$SYS_PATH/.cache"
+                            if [ ! -w "$CACHE_DIR" ]; then
+                                echo "Error: No write permission for $CACHE_DIR" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "Error: No write permission for $CACHE_DIR" 5
+                                continue
+                            fi
+
+                            # Check if PROBLEMATIC_NAMES_FILE is readable and not empty
+                            if [ ! -r "$PROBLEMATIC_NAMES_FILE" ] || [ ! -s "$PROBLEMATIC_NAMES_FILE" ]; then
+                                echo "Warning: $PROBLEMATIC_NAMES_FILE is not readable or empty, removing it" >> "$LOGS_PATH/Rom Inspector.txt"
+                                rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                            else
+                                # Clean PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters
+                                echo "DEBUG: Cleaning $PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters" >> "$LOGS_PATH/Rom Inspector.txt"
+                                grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.clean" 2>>"$LOGS_PATH/Rom Inspector.txt" && mv "${PROBLEMATIC_NAMES_FILE}.clean" "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                # Remove the renamed file from the list
+                                echo "DEBUG: Executing grep -vFx \"$selected_file\" \"$PROBLEMATIC_NAMES_FILE\" > \"${PROBLEMATIC_NAMES_FILE}.tmp\"" >> "$LOGS_PATH/Rom Inspector.txt"
+                                if grep -vFx "$selected_file" "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.tmp" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                    if mv "${PROBLEMATIC_NAMES_FILE}.tmp" "$PROBLEMATIC_NAMES_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                        echo "Successfully updated $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    else
+                                        echo "Warning: Failed to move ${PROBLEMATIC_NAMES_FILE}.tmp to $PROBLEMATIC_NAMES_FILE, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                        rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                    fi
+                                else
+                                    echo "Warning: Failed to execute grep -vFx for $selected_file in $PROBLEMATIC_NAMES_FILE, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                    rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                fi
+                            fi
+                            
+                            # Log the content of PROBLEMATIC_NAMES_FILE after update
+                            echo "DEBUG: Content of $PROBLEMATIC_NAMES_FILE after update:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            cat "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: File is empty or not found" >> "$LOGS_PATH/Rom Inspector.txt"
+                            # Log hex dump after update
+                            echo "DEBUG: Hex dump of $PROBLEMATIC_NAMES_FILE after update:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            xxd "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: Unable to perform hex dump" >> "$LOGS_PATH/Rom Inspector.txt"
+                            
+                            # Check if the file is empty or contains only whitespace
+                            if [ ! -f "$PROBLEMATIC_NAMES_FILE" ] || [ ! -s "$PROBLEMATIC_NAMES_FILE" ] || ! grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" >/dev/null 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                echo "Problematic names file is empty or contains only whitespace for $selected_sys, removed" >> "$LOGS_PATH/Rom Inspector.txt"
+                            fi
+                            
+                            # Update the count in the main menu
+                            if [ -f "$PROBLEMATIC_NAMES_FILE" ]; then
+                                NEW_COUNT=$(grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" | wc -l 2>>"$LOGS_PATH/Rom Inspector.txt" || echo 0)
+                            else
+                                NEW_COUNT=0
+                            fi
+                            echo "DEBUG: NEW_COUNT after rename for $selected_sys: $NEW_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
+                            TOTAL_PROBLEMATIC_NAMES=$((TOTAL_PROBLEMATIC_NAMES - 1))
+                            if [ "$NEW_COUNT" -eq 0 ]; then
+                                sed -i "/^$selected_sys - /d" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                echo "No more problematic names for $selected_sys, removed from menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "All problematic names fixed for $selected_sys" 3
+                                # Check if no systems with problematic names remain
+                                if [ ! -s /tmp/rom_names.menu ]; then
+                                    echo "No systems with problematic ROM names remain" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    show_message "No systems with problematic ROM names remain." 5
+                                    break 2
+                                fi
+                                break
+                            else
+                                if [ "$NEW_COUNT" -eq 1 ]; then
+                                    sed -i "/^$selected_sys - /c\\$selected_sys - 1 problematic name" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                    echo "Updated $selected_sys in rom_names.menu with 1 problematic name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                else
+                                    sed -i "/^$selected_sys - /c\\$selected_sys - $NEW_COUNT problematic names" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                    echo "Updated $selected_sys in rom_names.menu with $NEW_COUNT problematic names" >> "$LOGS_PATH/Rom Inspector.txt"
+                                fi
+                            fi
+                        else
+                            echo "Error: Failed to rename $ROM_TO_RENAME to $NEW_ROM_PATH" >> "$LOGS_PATH/Rom Inspector.txt"
+                            show_message "Error: Failed to rename $selected_file." 5
+                            # Remove the file from the list anyway to prevent re-selection
+                            if [ -w "$SYS_PATH/.cache" ]; then
+                                if [ -r "$PROBLEMATIC_NAMES_FILE" ] && [ -s "$PROBLEMATIC_NAMES_FILE" ]; then
+                                    echo "DEBUG: Executing grep -vFx \"$selected_file\" \"$PROBLEMATIC_NAMES_FILE\" > \"${PROBLEMATIC_NAMES_FILE}.tmp\" after failed rename" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "DEBUG: Hex dump of $PROBLEMATIC_NAMES_FILE before update (failed rename):" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    xxd "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: Unable to perform hex dump" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    # Clean PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters
+                                    echo "DEBUG: Cleaning $PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters (failed rename)" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.clean" 2>>"$LOGS_PATH/Rom Inspector.txt" && mv "${PROBLEMATIC_NAMES_FILE}.clean" "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                    if grep -vFx "$selected_file" "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.tmp" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                        if mv "${PROBLEMATIC_NAMES_FILE}.tmp" "$PROBLEMATIC_NAMES_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                            echo "Successfully updated $PROBLEMATIC_NAMES_FILE after failed rename" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        else
+                                            echo "Warning: Failed to move ${PROBLEMATIC_NAMES_FILE}.tmp to $PROBLEMATIC_NAMES_FILE after failed rename, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                            rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                        fi
+                                    else
+                                        echo "Warning: Failed to execute grep -vFx for $selected_file in $PROBLEMATIC_NAMES_FILE after failed rename, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                        rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                    fi
+                                else
+                                    echo "Warning: $PROBLEMATIC_NAMES_FILE is not readable or empty after failed rename, removing it" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                fi
+                            else
+                                echo "Error: No write permission for $SYS_PATH/.cache after failed rename" >> "$LOGS_PATH/Rom Inspector.txt"
+                            fi
+                            # Recalculate NEW_COUNT after failed rename
+                            if [ -f "$PROBLEMATIC_NAMES_FILE" ]; then
+                                NEW_COUNT=$(grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" | wc -l 2>>"$LOGS_PATH/Rom Inspector.txt" || echo 0)
+                            else
+                                NEW_COUNT=0
+                            fi
+                            echo "DEBUG: NEW_COUNT after failed rename for $selected_sys: $NEW_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
+                            if [ "$NEW_COUNT" -eq 0 ]; then
+                                rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                sed -i "/^$selected_sys - /d" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                echo "No more problematic names for $selected_sys, removed from menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "All problematic names fixed for $selected_sys" 3
+                                if [ ! -s /tmp/rom_names.menu ]; then
+                                    echo "No systems with problematic ROM names remain" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    show_message "No systems with problematic ROM names remain." 5
+                                    break 2
+                                fi
+                                break
+                            fi
+                        fi
+                    else
+                        echo "Rename cancelled for $selected_file" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Rename cancelled for $selected_file" 3
+                    fi
+                    ;;
+                "Delete ROM")
+                    if confirm_deletion "$ROM_TO_RENAME" "ROM"; then
+                        if rm -f "$ROM_TO_RENAME" 2>/dev/null; then
+                            echo "Deleted ROM: $ROM_TO_RENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                            echo "System: $selected_sys" >> "$OUTPUT_FILE"
+                            echo "- Deleted: $selected_file" >> "$OUTPUT_FILE"
+                            show_message "Deleted: $selected_file" 3
+                            
+                            # Log the content of PROBLEMATIC_NAMES_FILE before update
+                            echo "DEBUG: Content of $PROBLEMATIC_NAMES_FILE before update:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            cat "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: File is empty or not found" >> "$LOGS_PATH/Rom Inspector.txt"
+                            # Log hex dump to detect invisible characters
+                            echo "DEBUG: Hex dump of $PROBLEMATIC_NAMES_FILE:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            xxd "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: Unable to perform hex dump" >> "$LOGS_PATH/Rom Inspector.txt"
+                            
+                            # Check write permissions for the .cache directory
+                            CACHE_DIR="$SYS_PATH/.cache"
+                            if [ ! -w "$CACHE_DIR" ]; then
+                                echo "Error: No write permission for $CACHE_DIR" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "Error: No write permission for $CACHE_DIR" 5
+                                continue
+                            fi
+
+                            # Check if PROBLEMATIC_NAMES_FILE is readable and not empty
+                            if [ ! -r "$PROBLEMATIC_NAMES_FILE" ] || [ ! -s "$PROBLEMATIC_NAMES_FILE" ]; then
+                                echo "Warning: $PROBLEMATIC_NAMES_FILE is not readable or empty, removing it" >> "$LOGS_PATH/Rom Inspector.txt"
+                                rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                            else
+                                # Clean PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters
+                                echo "DEBUG: Cleaning $PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters" >> "$LOGS_PATH/Rom Inspector.txt"
+                                grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.clean" 2>>"$LOGS_PATH/Rom Inspector.txt" && mv "${PROBLEMATIC_NAMES_FILE}.clean" "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                # Remove the deleted file from the list
+                                echo "DEBUG: Executing grep -vFx \"$selected_file\" \"$PROBLEMATIC_NAMES_FILE\" > \"${PROBLEMATIC_NAMES_FILE}.tmp\"" >> "$LOGS_PATH/Rom Inspector.txt"
+                                if grep -vFx "$selected_file" "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.tmp" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                    if mv "${PROBLEMATIC_NAMES_FILE}.tmp" "$PROBLEMATIC_NAMES_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                        echo "Successfully updated $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    else
+                                        echo "Warning: Failed to move ${PROBLEMATIC_NAMES_FILE}.tmp to $PROBLEMATIC_NAMES_FILE, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                        rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                    fi
+                                else
+                                    echo "Warning: Failed to execute grep -vFx for $selected_file in $PROBLEMATIC_NAMES_FILE, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                    rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                fi
+                            fi
+                            
+                            # Log the content of PROBLEMATIC_NAMES_FILE after update
+                            echo "DEBUG: Content of $PROBLEMATIC_NAMES_FILE after update:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            cat "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: File is empty or not found" >> "$LOGS_PATH/Rom Inspector.txt"
+                            # Log hex dump after update
+                            echo "DEBUG: Hex dump of $PROBLEMATIC_NAMES_FILE after update:" >> "$LOGS_PATH/Rom Inspector.txt"
+                            xxd "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: Unable to perform hex dump" >> "$LOGS_PATH/Rom Inspector.txt"
+                            
+                            # Check if the file is empty or contains only whitespace
+                            if [ ! -f "$PROBLEMATIC_NAMES_FILE" ] || [ ! -s "$PROBLEMATIC_NAMES_FILE" ] || ! grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" >/dev/null 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                echo "Problematic names file is empty or contains only whitespace for $selected_sys, removed" >> "$LOGS_PATH/Rom Inspector.txt"
+                            fi
+                            
+                            # Update the count in the main menu
+                            if [ -f "$PROBLEMATIC_NAMES_FILE" ]; then
+                                NEW_COUNT=$(grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" | wc -l 2>>"$LOGS_PATH/Rom Inspector.txt" || echo 0)
+                            else
+                                NEW_COUNT=0
+                            fi
+                            echo "DEBUG: NEW_COUNT after delete for $selected_sys: $NEW_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
+                            TOTAL_PROBLEMATIC_NAMES=$((TOTAL_PROBLEMATIC_NAMES - 1))
+                            if [ "$NEW_COUNT" -eq 0 ]; then
+                                sed -i "/^$selected_sys - /d" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                echo "No more problematic names for $selected_sys, removed from menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "All problematic names fixed for $selected_sys" 3
+                                # Check if no systems with problematic names remain
+                                if [ ! -s /tmp/rom_names.menu ]; then
+                                    echo "No systems with problematic ROM names remain" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    show_message "No systems with problematic ROM names remain." 5
+                                    break 2
+                                fi
+                                break
+                            else
+                                if [ "$NEW_COUNT" -eq 1 ]; then
+                                    sed -i "/^$selected_sys - /c\\$selected_sys - 1 problematic name" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                    echo "Updated $selected_sys in rom_names.menu with 1 problematic name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                else
+                                    sed -i "/^$selected_sys - /c\\$selected_sys - $NEW_COUNT problematic names" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                    echo "Updated $selected_sys in rom_names.menu with $NEW_COUNT problematic names" >> "$LOGS_PATH/Rom Inspector.txt"
+                                fi
+                            fi
+                        else
+                            echo "Error: Failed to delete $ROM_TO_RENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                            show_message "Error: Failed to delete $selected_file." 5
+                            # Remove the file from the list anyway to prevent re-selection
+                            if [ -w "$SYS_PATH/.cache" ]; then
+                                if [ -r "$PROBLEMATIC_NAMES_FILE" ] && [ -s "$PROBLEMATIC_NAMES_FILE" ]; then
+                                    echo "DEBUG: Executing grep -vFx \"$selected_file\" \"$PROBLEMATIC_NAMES_FILE\" > \"${PROBLEMATIC_NAMES_FILE}.tmp\" after failed delete" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "DEBUG: Hex dump of $PROBLEMATIC_NAMES_FILE before update (failed delete):" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    xxd "$PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "DEBUG: Unable to perform hex dump" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    # Clean PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters
+                                    echo "DEBUG: Cleaning $PROBLEMATIC_NAMES_FILE to remove trailing newlines or invalid characters (failed delete)" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.clean" 2>>"$LOGS_PATH/Rom Inspector.txt" && mv "${PROBLEMATIC_NAMES_FILE}.clean" "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                    if grep -vFx "$selected_file" "$PROBLEMATIC_NAMES_FILE" > "${PROBLEMATIC_NAMES_FILE}.tmp" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                        if mv "${PROBLEMATIC_NAMES_FILE}.tmp" "$PROBLEMATIC_NAMES_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+                                            echo "Successfully updated $PROBLEMATIC_NAMES_FILE after failed delete" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        else
+                                            echo "Warning: Failed to move ${PROBLEMATIC_NAMES_FILE}.tmp to $PROBLEMATIC_NAMES_FILE after failed delete, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                            rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                        fi
+                                    else
+                                        echo "Warning: Failed to execute grep -vFx for $selected_file in $PROBLEMATIC_NAMES_FILE after failed delete, removing $PROBLEMATIC_NAMES_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        rm -f "${PROBLEMATIC_NAMES_FILE}.tmp" 2>/dev/null
+                                        rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                    fi
+                                else
+                                    echo "Warning: $PROBLEMATIC_NAMES_FILE is not readable or empty after failed delete, removing it" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                fi
+                            else
+                                echo "Error: No write permission for $SYS_PATH/.cache after failed delete" >> "$LOGS_PATH/Rom Inspector.txt"
+                            fi
+                            # Recalculate NEW_COUNT after failed delete
+                            if [ -f "$PROBLEMATIC_NAMES_FILE" ]; then
+                                NEW_COUNT=$(grep -v '^[[:space:]]*$' "$PROBLEMATIC_NAMES_FILE" | wc -l 2>>"$LOGS_PATH/Rom Inspector.txt" || echo 0)
+                            else
+                                NEW_COUNT=0
+                            fi
+                            echo "DEBUG: NEW_COUNT after failed delete for $selected_sys: $NEW_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
+                            if [ "$NEW_COUNT" -eq 0 ]; then
+                                rm -f "$PROBLEMATIC_NAMES_FILE" 2>/dev/null
+                                sed -i "/^$selected_sys - /d" /tmp/rom_names.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
+                                echo "No more problematic names for $selected_sys, removed from menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                                show_message "All problematic names fixed for $selected_sys" 3
+                                if [ ! -s /tmp/rom_names.menu ]; then
+                                    echo "No systems with problematic ROM names remain" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    show_message "No systems with problematic ROM names remain." 5
+                                    break 2
+                                fi
+                                break
+                            fi
+                        fi
+                    else
+                        echo "Deletion cancelled for $selected_file" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Deletion cancelled for $selected_file" 3
+                    fi
+                    ;;
+                "Skip")
+                    echo "Skipped action for $selected_file" >> "$LOGS_PATH/Rom Inspector.txt"
+                    show_message "Skipped: $selected_file" 3
+                    ;;
+                *)
+                    echo "Error: Invalid action selected: $action" >> "$LOGS_PATH/Rom Inspector.txt"
+                    show_message "Error: Invalid action." 5
+                    ;;
+            esac
+        done
+    done
+
+    echo "Exiting check_rom_names function" >> "$LOGS_PATH/Rom Inspector.txt"
+    show_message "ROM names report saved to $OUTPUT_FILE" 5
+    return 0
+}
+
 # Main menu
 > /tmp/main_menu.menu || {
     echo "Error: Failed to create /tmp/main_menu.menu" >> "$LOGS_PATH/Rom Inspector.txt"
     show_message "Error: Failed to create main menu." 5
     exit 1
 }
-echo "Check ROM sizes" >> /tmp/main_menu.menu
+echo "Check ROMs sizes" >> /tmp/main_menu.menu
 echo "Remove duplicate ROMs" >> /tmp/main_menu.menu
 echo "List missing covers" >> /tmp/main_menu.menu
 echo "List orphaned files" >> /tmp/main_menu.menu
 echo "Verify cover resolutions" >> /tmp/main_menu.menu
+echo "Check ROMs names" >> /tmp/main_menu.menu
+echo "Manage ZIP ROMs" >> /tmp/main_menu.menu
 echo "Statistics" >> /tmp/main_menu.menu
 echo "Exit" >> /tmp/main_menu.menu
 
@@ -2133,8 +3358,8 @@ while true; do
     echo "Selected option: $selected_option" >> "$LOGS_PATH/Rom Inspector.txt"
 
     case "$selected_option" in
-        "Check ROM sizes")
-            check_rom_sizes
+        "Check ROMs sizes")
+            check_roms_sizes
             ;;
         "Remove duplicate ROMs")
             remove_duplicate_roms
@@ -2147,6 +3372,12 @@ while true; do
             ;;
         "Verify cover resolutions")
             verify_cover_resolutions
+            ;;
+        "Check ROMs names")
+            check_roms_names
+            ;;
+        "Manage ZIP ROMs")
+            Manage_zip_roms
             ;;
         "Statistics")
             statistics

@@ -1,0 +1,61 @@
+Date: 2025-07-01Time: 17:06 CEST
+Author: Gabrielpsp
+
+Change Description (list_missing_covers)
+
+Updated list_missing_covers to use "cover" (singular) when one cover is missing and "covers" (plural) when multiple covers are missing.
+Affected: Menu (/tmp/roms_missing.menu) and report (missing_covers.txt).
+Purpose: Improve clarity of output text.
+Commit Message: "Use singular 'cover' for one missing cover and plural 'covers' for multiple in list_missing_covers."
+
+Change Description (list_orphaned_files)
+
+Updated list_orphaned_files to use "file" (singular) when one orphaned file is detected and "files" (plural) when multiple files are detected.
+Affected: Menu (/tmp/roms_orphaned.menu) and report (orphaned_files.txt).
+Purpose: Enhance output clarity with correct singular/plural terminology.
+Commit Message: "Use singular 'file' for one orphaned file and plural 'files' for multiple in list_orphaned_files."
+
+Change Description (statistics)
+
+Updated View total ROMs per system in statistics function to use "ROM" (singular) when one ROM is detected and "ROMs" (plural) when multiple ROMs are detected.
+Affected: Menu (/tmp/total_roms.menu).
+Purpose: Improve clarity of output text by using correct singular/plural terminology.
+Commit Message: "Use singular 'ROM' for one ROM and plural 'ROMs' for multiple in View total ROMs per system."
+
+Change Description (analyze_disk_usage)
+
+Updated analyze_disk_usage to suppress user-facing error messages when show_message fails to display system details or total disk usage, ensuring a seamless return to the system list menu without displaying errors.
+Added cleanup of /tmp/minui-output before relaunching minui-list to prevent stale data issues.
+Modified the system list menu (/tmp/disk_usage.menu) to show only the system name and total size on a single line, requiring the user to select a system to view detailed information (ROMs, Covers, Total size) instead of displaying all details in the list.
+Optionally provided logic to stay in the system list menu on "BACK" press instead of returning to the parent menu.
+Affected: Menu loop (/tmp/disk_usage.menu), log ($LOGS_PATH/Rom Inspector.txt), and user interface for system details display.
+Purpose: Eliminate unwanted error messages, improve menu loop reliability, and simplify the system list by showing detailed information only on selection.
+Commit Message: "Suppress error messages on show_message failure, ensure seamless system list menu reload, and display system details on selection instead of in the list in analyze_disk_usage."
+
+Change Description (General)
+
+Added CHD file format for PS1 as valid extension.
+Affected: get_valid_extensions function.
+Purpose: Support additional PlayStation ROM format.
+Commit Message: "Add CHD file format for PlayStation in get_valid_extensions."
+
+New function (check_rom_names)
+
+Added new function check_rom_names to the main menu to verify if ROM names adhere to an expected format, excluding special characters (e.g., #, %, $, *, +, ?, =, &, |, <, >, !, @, square brackets) or multiple consecutive spaces.
+Generates a report (rom_names_report.txt) listing ROMs with problematic names per system.
+Provides an interactive menu to view problematic ROM names, with options to rename (to an automatic cleaned-up version) or delete them.
+Uses "name" (singular) when one problematic name is detected and "names" (plural) when multiple names are detected in /tmp/rom_names.menu and rom_names_report.txt.
+Affected: Main menu (/tmp/main_menu.menu), new menu (/tmp/rom_names.menu), new report (rom_names_report.txt), log ($LOGS_PATH/Rom Inspector.txt).
+Purpose: Ensure ROM names follow a standard format for consistency and compatibility, with user-friendly options to address issues.
+Commit Message: "Add check_roms_names function to verify ROM names, generate report, and provide rename/delete options with singular/plural terminology."
+
+New function (Manage_zip_roms)
+
+Added new function Manage_zip_roms to the main menu to scan ZIP ROMs, generate a report (zip_roms_report.txt), and provide options to decompress, delete, or skip ZIP files.
+Updated Check_zip_roms to display loading screen (show_message) during decompression and deletion actions by removing fixed durations and synchronizing closure with kill $MESSAGE_PID.
+Uses "file" (singular) for one ZIP file and "files" (plural) for multiple in menus (/tmp/systems_zip.menu, /tmp/roms_zip.menu) and report (zip_roms_report.txt).
+Affected: Main menu (/tmp/main_menu.menu), new menus (/tmp/systems_zip.menu, /tmp/roms_zip.menu), new report (zip_roms_report.txt), log ($LOGS_PATH/Rom Inspector.txt).
+Purpose: Enable management of ZIP ROMs with user-friendly options and improve UX by showing loading screen during actions.
+Commit Message: "Add Check_zip_roms to manage ZIP ROMs with decompress/delete options and display loading screen during actions."
+
+
