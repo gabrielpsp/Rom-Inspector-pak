@@ -24,6 +24,12 @@ Identifies covers with incorrect resolutions (e.g., not 480x480 or too low), wit
 📊 Detailed Statistics
 Generates reports on ROM counts per system, cover usage percentage, and disk usage (ROMs and covers).
 
+📝 ROM Name Validation
+Checks ROM names for invalid characters and formatting issues, generates a report, and offers options to rename or delete problematic files.
+
+📦 ZIP ROM Management
+Scans ZIP ROM files, lets you decompress, delete, or skip them, and generates a detailed report with progress feedback.
+
 ⚙️ Technical Details
 Compatibility: Optimized for TrimUI Brick with NextUI, supports .media folders.
 
