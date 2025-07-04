@@ -339,6 +339,208 @@ is_valid_extension() {
     return 1
 }
 
+list_missing_covers() {
+    ROMS_DIR="/mnt/SDCARD/Roms"
+    OUTPUT_FILE="$EXPORT_FILE"
+    MAX_FILES=1000  # Global limit to avoid overload
+
+    # Determine if NextUI is used
+    is_nextui=false
+    image_folder=".media"
+    if [ "$IS_NEXT" = "true" ] || [ "$IS_NEXT" = "yes" ] || [ -f "$USERDATA_PATH/minuisettings.txt" ]; then
+        is_nextui=true
+    else
+        image_folder=".res"
+    fi
+    echo "Using image folder: $image_folder (is_nextui: $is_nextui)" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    show_message "Scanning for missing covers..." forever
+    LOADING_PID=$!
+
+    if [ ! -d "$ROMS_DIR" ] || [ ! -r "$ROMS_DIR" ]; then
+        stop_loading
+        echo "Error: ROMS_DIR ($ROMS_DIR) does not exist or is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: ROMs directory not found or not readable." 5
+        return 1
+    fi
+
+    if [ ! -w "/mnt/SDCARD" ]; then
+        stop_loading
+        echo "Error: No write access to /mnt/SDCARD." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Cannot write to /mnt/SDCARD." 5
+        return 1
+    fi
+
+    echo "=== Missing Covers Report ===" > "$OUTPUT_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt" || {
+        stop_loading
+        echo "Error: Failed to initialize $OUTPUT_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to create missing_covers.txt." 5
+        return 1
+    }
+
+    > /tmp/roms_missing.menu || {
+        stop_loading
+        echo "Error: Failed to create /tmp/roms_missing.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to create menu file." 5
+        return 1
+    }
+    VALID_SYSTEMS_FOUND=0
+    TOTAL_MISSING_COUNT=0
+
+    for SYS_PATH in "$ROMS_DIR"/*; do
+        [ -d "$SYS_PATH" ] || continue
+        [ -r "$SYS_PATH" ] || {
+            echo "Warning: Directory $SYS_PATH is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
+            continue
+        }
+        SYS_NAME="${SYS_PATH##*/}"
+        case "$SYS_NAME" in
+            .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
+        esac
+
+        VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+        [ -z "$VALID_EXTENSIONS" ] && {
+            echo "Skipping $SYS_NAME: No valid extensions defined." >> "$LOGS_PATH/Rom Inspector.txt"
+            continue
+        }
+
+        echo "Scanning system: $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+        MEDIA_PATH="$SYS_PATH/$image_folder"
+        ROM_COUNT=0
+        MISSING_COUNT=0
+        TEMP_FILE=$(mktemp)
+        FILE_COUNT=0
+
+        mkdir -p "$SYS_PATH/.cache" 2>/dev/null || {
+            echo "Warning: Failed to create cache directory $SYS_PATH/.cache" >> "$LOGS_PATH/Rom Inspector.txt"
+        }
+
+        for ROM in "$SYS_PATH"/*; do
+            [ -f "$ROM" ] && [ -r "$ROM" ] || continue
+            ROM_BASENAME="${ROM##*/}"
+            case "$ROM_BASENAME" in
+                .*|*.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
+            esac
+            if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
+                ROM_COUNT=$((ROM_COUNT + 1))
+                COVER_FILE="$MEDIA_PATH/${ROM_BASENAME%.*}.png"
+                if [ ! -f "$COVER_FILE" ] || [ ! -s "$COVER_FILE" ]; then
+                    MISSING_COUNT=$((MISSING_COUNT + 1))
+                    echo "$ROM_BASENAME" >> "$TEMP_FILE"
+                    echo "Missing cover for: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                else
+                    echo "Found cover for: $ROM_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                fi
+            fi
+            FILE_COUNT=$((FILE_COUNT + 1))
+            if [ "$FILE_COUNT" -gt "$MAX_FILES" ]; then
+                echo "Warning: Too many files in $SYS_NAME, limiting to $MAX_FILES" >> "$LOGS_PATH/Rom Inspector.txt"
+                break
+            fi
+        done
+
+        if [ "$MISSING_COUNT" -gt 0 ]; then
+            echo "$SYS_NAME - $MISSING_COUNT missing cover(s)" >> /tmp/roms_missing.menu
+            VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
+            TOTAL_MISSING_COUNT=$((TOTAL_MISSING_COUNT + MISSING_COUNT))
+            echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+            echo "Missing covers: $MISSING_COUNT" >> "$OUTPUT_FILE"
+            cat "$TEMP_FILE" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+            mv "$TEMP_FILE" "$SYS_PATH/.cache/missing_covers.txt" 2>/dev/null || {
+                echo "Warning: Failed to save missing covers list to $SYS_PATH/.cache/missing_covers.txt" >> "$LOGS_PATH/Rom Inspector.txt"
+                rm -f "$TEMP_FILE"
+            }
+        else
+            echo "No missing covers for $SYS_NAME (total ROMs: $ROM_COUNT)" >> "$LOGS_PATH/Rom Inspector.txt"
+            rm -f "$TEMP_FILE"
+        fi
+    done
+
+    stop_loading
+
+    if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
+        echo "No systems with missing covers found." >> "$LOGS_PATH/Rom Inspector.txt"
+        echo "No missing covers found." >> "$OUTPUT_FILE"
+        show_message "No missing covers found." 5
+        return 0
+    fi
+
+    echo "Systems with missing covers: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
+    echo "Total missing covers: $TOTAL_MISSING_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
+    cat /tmp/roms_missing.menu >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "Error: Failed to read /tmp/roms_missing.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    if [ ! -s /tmp/roms_missing.menu ]; then
+        echo "Error: /tmp/roms_missing.menu is empty or does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to generate systems menu." 5
+        return 1
+    fi
+
+    while true; do
+        minui-list --disable-auto-sleep \
+            --item-key missing_covers \
+            --file /tmp/roms_missing.menu \
+            --format text \
+            --cancel-text "BACK" \
+            --title "Systems with Missing Covers" \
+            --write-location /tmp/minui-output \
+            --write-value state
+        MINUI_EXIT_CODE=$?
+
+        if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+            echo "User cancelled systems menu (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
+            break
+        fi
+        if [ ! -f /tmp/minui-output ]; then
+            echo "Error: minui-list output file /tmp/minui-output not found" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "Error: Failed to read menu output." 5
+            break
+        fi
+
+        idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+        if [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ]; then
+            echo "Invalid or no selection: idx=$idx" >> "$LOGS_PATH/Rom Inspector.txt"
+            break
+        fi
+
+        selected_line=$(sed -n "$((idx + 1))p" /tmp/roms_missing.menu 2>/dev/null)
+        selected_sys=$(echo "$selected_line" | sed -E 's/ - (.*)$//')
+
+        SYS_PATH="/mnt/SDCARD/Roms/$selected_sys"
+        MISSING_COVERS_FILE="$SYS_PATH/.cache/missing_covers.txt"
+
+        if [ ! -f "$MISSING_COVERS_FILE" ] || [ ! -s "$MISSING_COVERS_FILE" ]; then
+            echo "Error: Missing covers file not found or empty for $selected_sys: $MISSING_COVERS_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+            show_message "No missing covers found for $selected_sys." 5
+            continue
+        fi
+
+        show_message "Loading missing covers for $selected_sys..." forever
+        LOADING_PID=$!
+
+        minui-list --disable-auto-sleep \
+            --item-key missing_cover_items \
+            --file "$MISSING_COVERS_FILE" \
+            --format text \
+            --cancel-text "BACK" \
+            --title "Missing Covers for $selected_sys" \
+            --write-location /tmp/minui-output \
+            --write-value state
+        MINUI_EXIT_CODE=$?
+
+        stop_loading
+
+        if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+            echo "User cancelled ROMs menu for $selected_sys (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
+            continue
+        fi
+    done
+
+    echo "Exiting list_missing_covers function" >> "$LOGS_PATH/Rom Inspector.txt"
+    show_message "Missing covers report saved to $OUTPUT_FILE" 5
+    return 0
+}
+
 Manage_zip_roms() {
     # Create logs directory if it doesn't exist
     if [ ! -d "$LOGS_PATH" ]; then
