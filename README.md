@@ -7,30 +7,39 @@ This initial beta release provides a set of tools to optimize your SD card file 
 ✨ Key Features :
 
 ✅ ROM Size Verification
+
 Identifies ROMs with suspicious sizes (too small or too large) based on system-specific thresholds, with an option to delete after confirmation.
 
 ♻️ Duplicate ROM Removal
+
 Detects and allows you to remove duplicate ROMs per system to save space.
 
 📄 Missing Covers List
+
 Scans for ROMs without corresponding cover images and generates a detailed report.
 
 🗑️ Orphaned Files Detection
+
 Finds cover images without matching ROMs, with an option to delete.
 
 🖼️ Cover Resolution Check
+
 Identifies covers with incorrect resolutions (e.g., not 480x480 or too low), with an option to delete.
 
 📊 Detailed Statistics
+
 Generates reports on ROM counts per system, cover usage percentage, and disk usage (ROMs and covers).
 
 📝 ROM Name Validation
-Checks ROM names for invalid characters and formatting issues, generates a report, and offers options to rename or delete problematic files.
+
+Checks ROM names for invalid characters and formatting issues, generates a report, and offers options to auto-rename or delete problematic files.
 
 📦 ZIP ROM Management
+
 Scans ZIP ROM files, lets you decompress, delete, or skip them, and generates a detailed report with progress feedback.
 
 ⚙️ Technical Details
+
 Compatibility: Optimized for TrimUI Brick with NextUI, supports .media folders.
 
 Interface: Uses minui-list for intuitive menu navigation.
