@@ -76,7 +76,8 @@ Change Description (list_orphaned_files)
 
 Added exclusion for bg.png files to prevent them from being detected as orphaned files in both system directories (/mnt/SDCARD/Roms/<SYSTEM>) and media directories (/mnt/SDCARD/Roms/<SYSTEM>/.media or .res).
 Included .txt files in system directories (/mnt/SDCARD/Roms/<SYSTEM>) as orphaned files, removing their exclusion from the list of system files to be skipped.
-Fixed issue where systems with no remaining orphaned files were still displayed in the systems menu (/tmp/roms_orphaned.menu) after deleting all orphaned files. Added logic to decrement VALID_SYSTEMS_FOUND and check if the menu is empty after deletion, exiting the function early with a message if no systems with orphaned files remain.
+Fixed issue where systems with no remaining orphaned files were still displayed in the systems menu (/tmp/roms_orphaned.menu) after deleting all orphaned files. 
+Added logic to decrement VALID_SYSTEMS_FOUND and check if the menu is empty after deletion, exiting the function early with a message if no systems with orphaned files remain.
 Affected: list_orphaned_files function, menu (/tmp/roms_orphaned.menu), log ($LOGS_PATH/Rom Inspector.txt), report (orphaned_files.txt).
 Purpose: Enhance accuracy of orphaned file detection by excluding bg.png, including .txt files as orphaned, and ensuring the systems menu is updated correctly after file deletions.
 Commit Message: "Exclude bg.png from orphaned files, include .txt files as orphaned in system directories, and fix menu update issue in list_orphaned_files to remove systems with no orphaned files."
@@ -87,3 +88,12 @@ Added .cue file format for PS1 as a valid extension.
 Affected: get_valid_extensions function.
 Purpose: Support additional PlayStation ROM format for better compatibility.
 Commit Message: "Add .cue file format for PlayStation in get_valid_extensions."
+
+Change Description (statistics)
+
+Enhanced View total ROMs per system in statistics function to display a list of ROM names when a system is selected, instead of returning to the "Statistics" menu.
+Added new menu (/tmp/rom_list.menu) to list all valid ROMs for the selected system, with a "BACK" option to return to the system list.
+Added /tmp/rom_list.menu to the cleanup function to ensure it is removed on script exit.
+Affected: statistics function, new menu (/tmp/rom_list.menu), log ($LOGS_PATH/Rom Inspector.txt), cleanup function.
+Purpose: Provide a detailed view of ROMs for each system, improving usability by allowing users to inspect individual ROM names.
+Commit Message: "Add ROM list display on system selection in View total ROMs per system, with new /tmp/rom_list.menu and cleanup."
