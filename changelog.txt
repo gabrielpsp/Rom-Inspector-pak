@@ -1,6 +1,10 @@
-Date: 2025-07-01Time: 17:06 CEST
+ROM-INSPECTOR-PAK CHANGELOG 
 Author: Gabrielpsp
 
+V0.1.0-beta :
+Initial release
+
+V0.4.0-beta :
 Change Description (list_missing_covers)
 
 Updated list_missing_covers to use "cover" (singular) when one cover is missing and "covers" (plural) when multiple covers are missing.
@@ -58,4 +62,10 @@ Affected: Main menu (/tmp/main_menu.menu), new menus (/tmp/systems_zip.menu, /tm
 Purpose: Enable management of ZIP ROMs with user-friendly options and improve UX by showing loading screen during actions.
 Commit Message: "Add Check_zip_roms to manage ZIP ROMs with decompress/delete options and display loading screen during actions."
 
+V.0.4.1-beta :
+Change Description (Manage_zip_roms)
 
+Fixed syntax error at line 1296 in Manage_zip_roms function causing unexpected "}" (expecting "fi"). Replaced command groups (e.g., rm -f "$file" && { ... } || { ... }) with explicit if/else statements to improve clarity and ensure proper syntax. 
+Validated all if statements have corresponding fi closures and removed potential stray braces. Simplified nested logic for decompression and deletion actions to reduce error likelihood. 
+Affected: Manage_zip_roms function, log ($LOGS_PATH/Rom Inspector.txt), report (zip_roms_report.txt). 
+Purpose: Resolve syntax error to ensure script runs without crashing and improve maintainability of the function. Commit Message: "Fix syntax error in Manage_zip_roms by replacing command groups with explicit if/else statements and ensuring proper if/fi pairing."
