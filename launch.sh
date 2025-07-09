@@ -2400,6 +2400,8 @@ analyze_disk_usage() {
     return 0
 }
 
+#!/bin/bash
+
 list_orphaned_files() {
     ROMS_DIR="/mnt/SDCARD/Roms"
     OUTPUT_FILE="$ORPHANED_FILES_FILE"
@@ -2471,10 +2473,51 @@ list_orphaned_files() {
         TEMP_FILE=$(mktemp)
         FILE_COUNT=0
 
+        # Check all files in the system directory (not just media folder)
+        for FILE in "$SYS_PATH"/*; do
+            [ -f "$FILE" ] || continue
+            FILE_BASENAME="${FILE##*/}"
+            # Skip bg.png
+            [ "$FILE_BASENAME" = "bg.png" ] && continue
+            FILE_NAME="${FILE_BASENAME%.*}"
+            FILE_EXT="${FILE_BASENAME##*.}"
+            
+            # Skip valid ROM files
+            is_valid_extension "$FILE_BASENAME" "$VALID_EXTENSIONS" && continue
+            
+            # Skip known system files (excluding .txt)
+            case "$FILE_BASENAME" in
+                *.miyoocmd|*.db|*.json|*.config|*.cfg|*.ini) continue ;;
+            esac
+
+            # Skip if this is a valid ROM file (without extension)
+            ROM_EXISTS=false
+            for EXT in $VALID_EXTENSIONS; do
+                if [ -f "$SYS_PATH/$FILE_NAME.$EXT" ]; then
+                    ROM_EXISTS=true
+                    break
+                fi
+            done
+            [ "$ROM_EXISTS" = true ] && continue
+
+            ORPHANED_COUNT=$((ORPHANED_COUNT + 1))
+            echo "$FILE_BASENAME" >> "$TEMP_FILE"
+            echo "Orphaned file: $FILE_BASENAME" >> "$LOGS_PATH/Rom Inspector.txt"
+            
+            FILE_COUNT=$((FILE_COUNT + 1))
+            if [ "$FILE_COUNT" -gt "$MAX_FILES" ]; then
+                echo "Warning: Too many files in $SYS_NAME, limiting to $MAX_FILES" >> "$LOGS_PATH/Rom Inspector.txt"
+                break
+            fi
+        done
+
+        # Also check media folder for orphaned images
         if [ -d "$MEDIA_PATH" ] && [ -r "$MEDIA_PATH" ]; then
-            for COVER in "$MEDIA_PATH"/*.png; do
-                [ -f "$COVER" ] && [ -r "$COVER" ] || continue
+            for COVER in "$MEDIA_PATH"/*; do
+                [ -f "$COVER" ] || continue
                 COVER_BASENAME="${COVER##*/}"
+                # Skip bg.png
+                [ "$COVER_BASENAME" = "bg.png" ] && continue
                 COVER_NAME="${COVER_BASENAME%.*}"
                 ROM_EXISTS=false
 
@@ -2625,7 +2668,13 @@ list_orphaned_files() {
                 break
             fi
 
-            FILE_TO_DELETE="$SYS_PATH/$image_folder/$selected_file"
+            # Check if file is in media folder or system folder
+            if [ -f "$SYS_PATH/$image_folder/$selected_file" ]; then
+                FILE_TO_DELETE="$SYS_PATH/$image_folder/$selected_file"
+            else
+                FILE_TO_DELETE="$SYS_PATH/$selected_file"
+            fi
+            
             echo "Attempting to delete: $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
 
             if confirm_deletion "$FILE_TO_DELETE" "orphaned file"; then
@@ -2649,6 +2698,15 @@ list_orphaned_files() {
                         echo "No more orphaned files for $selected_sys, removing from menu" >> "$LOGS_PATH/Rom Inspector.txt"
                         sed -i "/^$selected_sys - /d" /tmp/roms_orphaned.menu 2>>"$LOGS_PATH/Rom Inspector.txt"
                         rm -f "$ORPHANED_FILES_FILE"
+                        # Update VALID_SYSTEMS_FOUND and check if menu is empty
+                        VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND - 1))
+                        if [ "$VALID_SYSTEMS_FOUND" -eq 0 ] || [ ! -s /tmp/roms_orphaned.menu ]; then
+                            echo "No systems with orphaned files remain" >> "$LOGS_PATH/Rom Inspector.txt"
+                            show_message "No systems with orphaned files remain." 5
+                            stop_loading
+                            echo "Exiting list_orphaned_files function" >> "$LOGS_PATH/Rom Inspector.txt"
+                            return 0
+                        fi
                         break
                     fi
                 else
@@ -2662,12 +2720,6 @@ list_orphaned_files() {
         done
 
         stop_loading
-        # If the menu is empty, exit the system selection loop
-        if [ ! -s /tmp/roms_orphaned.menu ]; then
-            echo "No systems with orphaned files remain" >> "$LOGS_PATH/Rom Inspector.txt"
-            show_message "No systems with orphaned files remain." 5
-            break
-        fi
     done
 
     echo "Exiting list_orphaned_files function" >> "$LOGS_PATH/Rom Inspector.txt"
