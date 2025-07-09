@@ -87,7 +87,7 @@ cleanup() {
     else
         echo "No cache file found on exit: $CACHE_FILE"
     fi
-    rm -f /tmp/stay_awake /tmp/platforms.menu /tmp/main_menu.menu /tmp/minui-output /tmp/roms_missing.menu /tmp/roms_missing_temp.menu /tmp/duplicates.menu /tmp/roms_duplicates.menu /tmp/rom_files.menu /tmp/rom_names.txt /tmp/rom_names_only.txt /tmp/statistics.menu /tmp/total_roms.menu /tmp/covers_percentage.menu /tmp/rom_sizes.menu /tmp/rom_sizes_temp.menu /tmp/roms_orphaned.menu /tmp/systems_zip.menu /tmp/roms_zip.menu /tmp/zip_action.menu /tmp/keep_zip.menu /tmp/loading_pid 2>/dev/null
+    rm -f /tmp/stay_awake /tmp/platforms.menu /tmp/main_menu.menu /tmp/minui-output /tmp/roms_missing.menu /tmp/roms_missing_temp.menu /tmp/duplicates.menu /tmp/roms_duplicates.menu /tmp/rom_files.menu /tmp/rom_names.txt /tmp/rom_names_only.txt /tmp/statistics.menu /tmp/total_roms.menu /tmp/covers_percentage.menu /tmp/rom_sizes.menu /tmp/rom_sizes_temp.menu /tmp/roms_orphaned.menu /tmp/systems_zip.menu /tmp/roms_zip.menu /tmp/zip_action.menu /tmp/keep_zip.menu /tmp/loading_pid /tmp/rom_list.menu 2>/dev/null
     echo "Cleaned up temporary files."
 }
 trap cleanup EXIT INT TERM HUP QUIT
@@ -172,7 +172,7 @@ get_valid_extensions() {
             echo "md smd gen bin zip"
             ;;
         "Sony PlayStation (PS)"|"PS")
-            echo "bin iso img zip chd"
+            echo "bin iso img zip chd cue"
             ;;
         "PC Engine (PCE)"|"TurboGrafx-16 (PCE)"|"Super Grafx (SGFX)"|"TurboGrafx-CD (PCECD)"|"PCE"|"SGFX"|"PCECD")
             echo "pce zip"
@@ -1849,74 +1849,151 @@ statistics() {
 
         case "$selected_line" in
             "View total ROMs per system")
-    show_message "Loading total ROMs per system..." forever
-    LOADING_PID=$!
+                show_message "Loading total ROMs per system..." forever
+                LOADING_PID=$!
 
-    > /tmp/total_roms.menu || {
-        stop_loading
-        echo "Error: Failed to create /tmp/total_roms.menu" >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: Failed to create total ROMs menu." 5
-        return 1
-    }
+                > /tmp/total_roms.menu || {
+                    stop_loading
+                    echo "Error: Failed to create /tmp/total_roms.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                    show_message "Error: Failed to create total ROMs menu." 5
+                    return 1
+                }
 
-    TOTAL_ROM_COUNT=0
-    VALID_SYSTEMS_FOUND=0
+                TOTAL_ROM_COUNT=0
+                VALID_SYSTEMS_FOUND=0
 
-    for SYS_PATH in "$ROMS_DIR"/*; do
-        [ -d "$SYS_PATH" ] || continue
-        [ -r "$SYS_PATH" ] || continue
-        SYS_NAME="${SYS_PATH##*/}"
-        case "$SYS_NAME" in
-            .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
-        esac
+                for SYS_PATH in "$ROMS_DIR"/*; do
+                    [ -d "$SYS_PATH" ] || continue
+                    [ -r "$SYS_PATH" ] || continue
+                    SYS_NAME="${SYS_PATH##*/}"
+                    case "$SYS_NAME" in
+                        .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
+                    esac
 
-        VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
-        [ -z "$VALID_EXTENSIONS" ] && continue
+                    VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+                    [ -z "$VALID_EXTENSIONS" ] && continue
 
-        ROM_COUNT=0
-        for ROM in "$SYS_PATH"/*; do
-            [ -f "$ROM" ] && [ -r "$ROM" ] || continue
-            ROM_BASENAME="${ROM##*/}"
-            case "$ROM_BASENAME" in
-                .*) continue ;;
-                *.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
-            esac
-            if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
-                ROM_COUNT=$((ROM_COUNT + 1))
-            fi
-        done
+                    ROM_COUNT=0
+                    for ROM in "$SYS_PATH"/*; do
+                        [ -f "$ROM" ] && [ -r "$ROM" ] || continue
+                        ROM_BASENAME="${ROM##*/}"
+                        case "$ROM_BASENAME" in
+                            .*) continue ;;
+                            *.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
+                        esac
+                        if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
+                            ROM_COUNT=$((ROM_COUNT + 1))
+                        fi
+                    done
 
-        [ "$ROM_COUNT" -eq 0 ] && continue
+                    [ "$ROM_COUNT" -eq 0 ] && continue
 
-        if [ "$ROM_COUNT" -eq 1 ]; then
-            echo "$SYS_NAME - $ROM_COUNT ROM" >> /tmp/total_roms.menu
-        else
-            echo "$SYS_NAME - $ROM_COUNT ROMs" >> /tmp/total_roms.menu
-        fi
-        TOTAL_ROM_COUNT=$((TOTAL_ROM_COUNT + ROM_COUNT))
-        VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
-    done
+                    if [ "$ROM_COUNT" -eq 1 ]; then
+                        echo "$SYS_NAME - $ROM_COUNT ROM" >> /tmp/total_roms.menu
+                    else
+                        echo "$SYS_NAME - $ROM_COUNT ROMs" >> /tmp/total_roms.menu
+                    fi
+                    TOTAL_ROM_COUNT=$((TOTAL_ROM_COUNT + ROM_COUNT))
+                    VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
+                done
 
-    echo "Total ROMs: $TOTAL_ROM_COUNT" >> /tmp/total_roms.menu
+                echo "Total ROMs: $TOTAL_ROM_COUNT" >> /tmp/total_roms.menu
 
-    if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
-        stop_loading
-        echo "Error: No valid systems with ROMs found." >> "$LOGS_PATH/Rom Inspector.txt"
-        show_message "Error: No valid systems found." 5
-        return 1
-    fi
+                if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
+                    stop_loading
+                    echo "Error: No valid systems with ROMs found." >> "$LOGS_PATH/Rom Inspector.txt"
+                    show_message "Error: No valid systems found." 5
+                    return 1
+                fi
 
-    stop_loading
+                stop_loading
 
-    minui-list --disable-auto-sleep \
-        --item-key total_roms \
-        --file /tmp/total_roms.menu \
-        --format text \
-        --cancel-text "BACK" \
-        --title "Total ROMs per System" \
-        --write-location /tmp/minui-output \
-        --write-value state
-    ;;
+                while true; do
+                    minui-list --disable-auto-sleep \
+                        --item-key total_roms \
+                        --file /tmp/total_roms.menu \
+                        --format text \
+                        --cancel-text "BACK" \
+                        --title "Total ROMs per System" \
+                        --write-location /tmp/minui-output \
+                        --write-value state
+                    MINUI_EXIT_CODE=$?
+
+                    if [ ! -f /tmp/minui-output ] || [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+                        echo "User cancelled total ROMs menu (exit code: $MINUI_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+                        break
+                    fi
+
+                    idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+                    if [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ]; then
+                        echo "Invalid or no selection in total ROMs menu: idx=$idx" >> "$LOGS_PATH/Rom Inspector.txt"
+                        break
+                    fi
+
+                    selected_system=$(sed -n "$((idx + 1))p" /tmp/total_roms.menu 2>/dev/null)
+                    echo "Selected system: $selected_system" >> "$LOGS_PATH/Rom Inspector.txt"
+
+                    # Check if the selection is the "Total ROMs" line
+                    if echo "$selected_system" | grep -q "^Total ROMs:"; then
+                        echo "User selected Total ROMs line, skipping ROM list display" >> "$LOGS_PATH/Rom Inspector.txt"
+                        continue
+                    fi
+
+                    # Extract system name (remove ROM count part)
+                    SYS_NAME=$(echo "$selected_system" | sed 's/ - [0-9]\+ ROMs\?$//')
+                    SYS_PATH="$ROMS_DIR/$SYS_NAME"
+                    echo "Processing ROM list for system: $SYS_NAME ($SYS_PATH)" >> "$LOGS_PATH/Rom Inspector.txt"
+
+                    # Generate ROM list for the selected system
+                    > /tmp/rom_list.menu || {
+                        echo "Error: Failed to create /tmp/rom_list.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Error: Failed to create ROM list menu." 5
+                        break
+                    }
+
+                    VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+                    [ -z "$VALID_EXTENSIONS" ] && {
+                        echo "Error: No valid extensions for $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "Error: No valid extensions for $SYS_NAME." 5
+                        continue
+                    }
+
+                    ROM_COUNT=0
+                    for ROM in "$SYS_PATH"/*; do
+                        [ -f "$ROM" ] && [ -r "$ROM" ] || continue
+                        ROM_BASENAME="${ROM##*/}"
+                        case "$ROM_BASENAME" in
+                            .*) continue ;;
+                            *.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
+                        esac
+                        if is_valid_extension "$ROM_BASENAME" "$VALID_EXTENSIONS"; then
+                            echo "$ROM_BASENAME" >> /tmp/rom_list.menu
+                            ROM_COUNT=$((ROM_COUNT + 1))
+                        fi
+                    done
+
+                    if [ "$ROM_COUNT" -eq 0 ]; then
+                        echo "No ROMs found for $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                        show_message "No ROMs found for $SYS_NAME." 5
+                        continue
+                    fi
+
+                    # Display ROM list
+                    minui-list --disable-auto-sleep \
+                        --item-key rom_list \
+                        --file /tmp/rom_list.menu \
+                        --format text \
+                        --cancel-text "BACK" \
+                        --title "ROMs for $SYS_NAME" \
+                        --write-location /tmp/minui-output \
+                        --write-value state
+                    MINUI_ROM_EXIT_CODE=$?
+
+                    if [ "$MINUI_ROM_EXIT_CODE" -ne 0 ]; then
+                        echo "User cancelled ROM list for $SYS_NAME (exit code: $MINUI_ROM_EXIT_CODE)" >> "$LOGS_PATH/Rom Inspector.txt"
+                    fi
+                done
+                ;;
             "View percentage of ROMs with covers")
                 show_message "Loading percentage of ROMs with covers..." forever
                 LOADING_PID=$!
@@ -2399,8 +2476,6 @@ analyze_disk_usage() {
     show_message "Disk usage report saved to $OUTPUT_FILE" 5
     return 0
 }
-
-#!/bin/bash
 
 list_orphaned_files() {
     ROMS_DIR="/mnt/SDCARD/Roms"
