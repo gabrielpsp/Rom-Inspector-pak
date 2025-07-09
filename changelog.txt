@@ -1,10 +1,10 @@
-ROM-INSPECTOR-PAK CHANGELOG 
+ROM-INSPECTOR-PAK CHANGELOG
 Author: Gabrielpsp
 
-V0.1.0-beta :
+V0.1.0-beta
 Initial release
 
-V0.4.0-beta :
+V0.4.0-beta
 Change Description (list_missing_covers)
 
 Updated list_missing_covers to use "cover" (singular) when one cover is missing and "covers" (plural) when multiple covers are missing.
@@ -62,10 +62,28 @@ Affected: Main menu (/tmp/main_menu.menu), new menus (/tmp/systems_zip.menu, /tm
 Purpose: Enable management of ZIP ROMs with user-friendly options and improve UX by showing loading screen during actions.
 Commit Message: "Add Check_zip_roms to manage ZIP ROMs with decompress/delete options and display loading screen during actions."
 
-V.0.4.1-beta :
+V0.4.1-beta
 Change Description (Manage_zip_roms)
 
-Fixed syntax error at line 1296 in Manage_zip_roms function causing unexpected "}" (expecting "fi"). Replaced command groups (e.g., rm -f "$file" && { ... } || { ... }) with explicit if/else statements to improve clarity and ensure proper syntax. 
-Validated all if statements have corresponding fi closures and removed potential stray braces. Simplified nested logic for decompression and deletion actions to reduce error likelihood. 
-Affected: Manage_zip_roms function, log ($LOGS_PATH/Rom Inspector.txt), report (zip_roms_report.txt). 
-Purpose: Resolve syntax error to ensure script runs without crashing and improve maintainability of the function. Commit Message: "Fix syntax error in Manage_zip_roms by replacing command groups with explicit if/else statements and ensuring proper if/fi pairing."
+Fixed syntax error at line 1296 in Manage_zip_roms function causing unexpected "}" (expecting "fi"). Replaced command groups (e.g., rm -f "$file" && { ... } || { ... }) with explicit if/else statements to improve clarity and ensure proper syntax.
+Validated all if statements have corresponding fi closures and removed potential stray braces. Simplified nested logic for decompression and deletion actions to reduce error likelihood.
+Affected: Manage_zip_roms function, log ($LOGS_PATH/Rom Inspector.txt), report (zip_roms_report.txt).
+Purpose: Resolve syntax error to ensure script runs without crashing and improve maintainability of the function.
+Commit Message: "Fix syntax error in Manage_zip_roms by replacing command groups with explicit if/else statements and ensuring proper if/fi pairing."
+
+V0.4.2-beta
+Change Description (list_orphaned_files)
+
+Added exclusion for bg.png files to prevent them from being detected as orphaned files in both system directories (/mnt/SDCARD/Roms/<SYSTEM>) and media directories (/mnt/SDCARD/Roms/<SYSTEM>/.media or .res).
+Included .txt files in system directories (/mnt/SDCARD/Roms/<SYSTEM>) as orphaned files, removing their exclusion from the list of system files to be skipped.
+Fixed issue where systems with no remaining orphaned files were still displayed in the systems menu (/tmp/roms_orphaned.menu) after deleting all orphaned files. Added logic to decrement VALID_SYSTEMS_FOUND and check if the menu is empty after deletion, exiting the function early with a message if no systems with orphaned files remain.
+Affected: list_orphaned_files function, menu (/tmp/roms_orphaned.menu), log ($LOGS_PATH/Rom Inspector.txt), report (orphaned_files.txt).
+Purpose: Enhance accuracy of orphaned file detection by excluding bg.png, including .txt files as orphaned, and ensuring the systems menu is updated correctly after file deletions.
+Commit Message: "Exclude bg.png from orphaned files, include .txt files as orphaned in system directories, and fix menu update issue in list_orphaned_files to remove systems with no orphaned files."
+
+Change Description (General)
+
+Added .cue file format for PS1 as a valid extension.
+Affected: get_valid_extensions function.
+Purpose: Support additional PlayStation ROM format for better compatibility.
+Commit Message: "Add .cue file format for PlayStation in get_valid_extensions."
