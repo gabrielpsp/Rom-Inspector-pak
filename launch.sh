@@ -636,9 +636,9 @@ Manage_zip_roms() {
                 zip_count=$((zip_count + count))
                 echo "System: $sys_name ($count ZIP files)" >> "$ZIP_ROMS_FILE"
                 if [ -f "$roms_cache_dir/$sys_name.txt" ]; then
-                    cat "$roms_cache_dir/$sys_name.txt" | while IFS= read -r rom_name; do
+                    while IFS= read -r rom_name; do
                         echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
-                    done
+                    done < "$roms_cache_dir/$sys_name.txt"
                 fi
             fi
         done < "$cache_file"
@@ -650,26 +650,22 @@ Manage_zip_roms() {
         for dir in /mnt/SDCARD/Roms/*; do
             if [ -d "$dir" ]; then
                 sys_name=$(basename "$dir")
-                # Run counting in background
-                (
-                    find "$dir" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
-                    count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
-                    if [ "$count" -gt 0 ]; then
-                        echo "$sys_name:$count" >> "$cache_file"
-                        echo "$sys_name:$count" >> "$zip_counts_file"
-                        echo "$sys_name ($count ZIP files)" >> "$systems_menu"
-                        echo "System: $sys_name ($count ZIP files)" >> "$ZIP_ROMS_FILE"
-                        while IFS= read -r file; do
-                            rom_name=$(basename "$file")
-                            echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
-                        done < "$roms_cache_dir/$sys_name.txt"
-                        zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
-                        zip_count=$((zip_count + count))
-                    fi
-                ) &
+                find "$dir" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
+                count=$(wc -l < "$roms_cache_dir/$sys_name.txt")
+                if [ "$count" -gt 0 ]; then
+                    echo "$sys_name ($count ZIP files)" >> "$systems_menu"
+                    echo "$sys_name:$count" >> "$zip_counts_file"
+                    echo "$sys_name:$count" >> "$cache_file"
+                    zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+                    zip_count=$((zip_count + count))
+                    echo "System: $sys_name ($count ZIP files)" >> "$ZIP_ROMS_FILE"
+                    while IFS= read -r file; do
+                        rom_name=$(basename "$file")
+                        echo "  Found: $rom_name" >> "$ZIP_ROMS_FILE"
+                    done < "$roms_cache_dir/$sys_name.txt"
+                fi
             fi
         done
-        wait
         kill $MESSAGE_PID 2>/dev/null
     fi
 
@@ -712,20 +708,20 @@ Manage_zip_roms() {
         fi
 
         idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
-        [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ] && {
+        if [ "$idx" = "null" ] || [ -z "$idx" ] || [ "$idx" = "-1" ]; then
             echo "Invalid or no selection in systems menu: idx=$idx" >> "$LOGS_PATH/Rom Inspector.txt"
             show_message "Error: Invalid selection in systems menu." 2
             sleep 1
             break
-        }
+        fi
 
         selected_option=$(sed -n "$((idx + 1))p" "$systems_menu" 2>/dev/null)
-        [ -z "$selected_option" ] && {
+        if [ -z "$selected_option" ]; then
             echo "Error: Failed to retrieve selected option for index $idx" >> "$LOGS_PATH/Rom Inspector.txt"
             show_message "Error: Failed to retrieve selected option." 2
             sleep 1
             break
-        }
+        fi
         echo "Selected option: $selected_option" >> "$LOGS_PATH/Rom Inspector.txt"
 
         # Handle global actions
@@ -737,31 +733,32 @@ Manage_zip_roms() {
                 for dir in /mnt/SDCARD/Roms/*; do
                     if [ -d "$dir" ]; then
                         sys_name=$(basename "$dir")
-                        [ -f "$roms_cache_dir/$sys_name.txt" ] || continue
-                        while IFS= read -r file; do
-                            [ -f "$file" ] || {
-                                echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
-                                skipped_count=$((skipped_count + 1))
-                                continue
-                            }
-                            rom_name=$(basename "$file")
-                            unzip -t "$file" >/dev/null 2>&1 && {
-                                unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1 && {
-                                    echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
-                                    decompressed_count=$((decompressed_count + 1))
-                                } || {
-                                    echo "Error: Failed to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Failed to decompress $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                        if [ -f "$roms_cache_dir/$sys_name.txt" ]; then
+                            while IFS= read -r file; do
+                                if [ -f "$file" ]; then
+                                    rom_name=$(basename "$file")
+                                    if unzip -t "$file" >/dev/null 2>&1; then
+                                        if unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
+                                            echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            decompressed_count=$((decompressed_count + 1))
+                                        else
+                                            echo "Error: Failed to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Failed to decompress $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            skipped_count=$((skipped_count + 1))
+                                        fi
+                                    else
+                                        echo "Error: Invalid or corrupted ZIP file: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        echo "  Action: Skipped $rom_name in $sys_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
+                                        skipped_count=$((skipped_count + 1))
+                                    fi
+                                else
+                                    echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                    echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
                                     skipped_count=$((skipped_count + 1))
-                                }
-                            } || {
-                                echo "Error: Invalid or corrupted ZIP file: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                echo "  Action: Skipped $rom_name in $sys_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
-                                skipped_count=$((skipped_count + 1))
-                            }
-                        done < "$roms_cache_dir/$sys_name.txt"
+                                fi
+                            done < "$roms_cache_dir/$sys_name.txt"
+                        fi
                     fi
                 done
                 kill $MESSAGE_PID 2>/dev/null
@@ -803,25 +800,26 @@ Manage_zip_roms() {
                     for dir in /mnt/SDCARD/Roms/*; do
                         if [ -d "$dir" ]; then
                             sys_name=$(basename "$dir")
-                            [ -f "$roms_cache_dir/$sys_name.txt" ] || continue
-                            while IFS= read -r file; do
-                                [ -f "$file" ] || {
-                                    echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
-                                    skipped_count=$((skipped_count + 1))
-                                    continue
-                                }
-                                rom_name=$(basename "$file")
-                                rm -f "$file" && {
-                                    echo "Deleted ZIP ROM: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
-                                    deleted_count=$((deleted_count + 1))
-                                } || {
-                                    echo "Error: Failed to delete $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Failed to delete $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
-                                    skipped_count=$((skipped_count + 1))
-                                }
-                            done < "$roms_cache_dir/$sys_name.txt"
+                            if [ -f "$roms_cache_dir/$sys_name.txt" ]; then
+                                while IFS= read -r file; do
+                                    if [ -f "$file" ]; then
+                                        rom_name=$(basename "$file")
+                                        if rm -f "$file"; then
+                                            echo "Deleted ZIP ROM: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            deleted_count=$((deleted_count + 1))
+                                        else
+                                            echo "Error: Failed to delete $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Failed to delete $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            skipped_count=$((skipped_count + 1))
+                                        fi
+                                    else
+                                        echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
+                                        skipped_count=$((skipped_count + 1))
+                                    fi
+                                done < "$roms_cache_dir/$sys_name.txt"
+                            fi
                         fi
                     done
                     kill $MESSAGE_PID 2>/dev/null
@@ -867,40 +865,41 @@ Manage_zip_roms() {
                     for dir in /mnt/SDCARD/Roms/*; do
                         if [ -d "$dir" ]; then
                             sys_name=$(basename "$dir")
-                            [ -f "$roms_cache_dir/$sys_name.txt" ] || continue
-                            while IFS= read -r file; do
-                                [ -f "$file" ] || {
-                                    echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
-                                    skipped_count=$((skipped_count + 1))
-                                    continue
-                                }
-                                rom_name=$(basename "$file")
-                                unzip -t "$file" >/dev/null 2>&1 && {
-                                    unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1 && {
-                                        echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                        echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
-                                        decompressed_count=$((decompressed_count + 1))
-                                        rm -f "$file" && {
-                                            echo "Deleted original ZIP: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                            echo "  Action: Decompressed and deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
-                                            deleted_count=$((deleted_count + 1))
-                                        } || {
-                                            echo "Error: Failed to delete $rom_name in $sys_name after decompression" >> "$LOGS_PATH/Rom Inspector.txt"
-                                            echo "  Action: Decompressed but failed to delete $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                            if [ -f "$roms_cache_dir/$sys_name.txt" ]; then
+                                while IFS= read -r file; do
+                                    if [ -f "$file" ]; then
+                                        rom_name=$(basename "$file")
+                                        if unzip -t "$file" >/dev/null 2>&1; then
+                                            if unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
+                                                echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                                echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                                decompressed_count=$((decompressed_count + 1))
+                                                if rm -f "$file"; then
+                                                    echo "Deleted original ZIP: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                                    echo "  Action: Decompressed and deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                                    deleted_count=$((deleted_count + 1))
+                                                else
+                                                    echo "Error: Failed to delete $rom_name in $sys_name after decompression" >> "$LOGS_PATH/Rom Inspector.txt"
+                                                    echo "  Action: Decompressed but failed to delete $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                                    skipped_count=$((skipped_count + 1))
+                                                fi
+                                            else
+                                                echo "Error: Failed to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                                echo "  Action: Failed to decompress $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                                skipped_count=$((skipped_count + 1))
+                                            fi
+                                        else
+                                            echo "Error: Invalid or corrupted ZIP file: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Skipped $rom_name in $sys_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
                                             skipped_count=$((skipped_count + 1))
-                                        }
-                                    } || {
-                                        echo "Error: Failed to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                        echo "  Action: Failed to decompress $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                        fi
+                                    else
+                                        echo "Error: File $file does not exist in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                        echo "  Action: Skipped $file in $sys_name (file does not exist)" >> "$ZIP_ROMS_FILE"
                                         skipped_count=$((skipped_count + 1))
-                                    }
-                                } || {
-                                    echo "Error: Invalid or corrupted ZIP file: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
-                                    echo "  Action: Skipped $rom_name in $sys_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
-                                    skipped_count=$((skipped_count + 1))
-                                }
-                            done < "$roms_cache_dir/$sys_name.txt"
+                                    fi
+                                done < "$roms_cache_dir/$sys_name.txt"
+                            fi
                         fi
                     done
                     kill $MESSAGE_PID 2>/dev/null
@@ -940,12 +939,12 @@ Manage_zip_roms() {
                 ;;
             *)
                 sys_name=$(echo "$selected_option" | sed 's/ ([0-9]* ZIP files)//')
-                [ -z "$sys_name" ] && {
+                if [ -z "$sys_name" ]; then
                     echo "Error: Failed to retrieve system name for index $idx" >> "$LOGS_PATH/Rom Inspector.txt"
                     show_message "Error: Failed to retrieve system name." 2
                     sleep 1
                     break
-                }
+                fi
                 echo "Selected system: $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
                 ;;
         esac
@@ -961,16 +960,16 @@ Manage_zip_roms() {
 
             # Use cached ROM list if available and valid
             if [ -f "$roms_cache_dir/$sys_name.txt" ] && [ -s "$roms_cache_dir/$sys_name.txt" ]; then
-                cat "$roms_cache_dir/$sys_name.txt" | while IFS= read -r file; do
+                while IFS= read -r file; do
                     rom_name=$(basename "$file")
                     echo "$rom_name" >> "$roms_menu"
-                done
+                done < "$roms_cache_dir/$sys_name.txt"
             else
                 find "/mnt/SDCARD/Roms/$sys_name" -type f -iname "*.zip" -maxdepth 1 | sort > "$roms_cache_dir/$sys_name.txt"
-                cat "$roms_cache_dir/$sys_name.txt" | while IFS= read -r file; do
+                while IFS= read -r file; do
                     rom_name=$(basename "$file")
                     echo "$rom_name" >> "$roms_menu"
-                done
+                done < "$roms_cache_dir/$sys_name.txt"
             fi
 
             if [ ! -s "$roms_menu" ]; then
@@ -998,20 +997,20 @@ Manage_zip_roms() {
             fi
 
             rom_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
-            [ "$rom_idx" = "null" ] || [ -z "$rom_idx" ] || [ "$rom_idx" = "-1" ] && {
+            if [ "$rom_idx" = "null" ] || [ -z "$rom_idx" ] || [ "$rom_idx" = "-1" ]; then
                 echo "Invalid or no selection in ROMs menu for $sys_name: idx=$rom_idx" >> "$LOGS_PATH/Rom Inspector.txt"
                 show_message "Error: Invalid selection in ROMs menu." 2
                 sleep 1
                 break
-            }
+            fi
 
             rom_name=$(sed -n "$((rom_idx + 1))p" "$roms_menu" 2>/dev/null)
-            [ -z "$rom_name" ] && {
+            if [ -z "$rom_name" ]; then
                 echo "Error: Failed to retrieve ROM name for index $rom_idx" >> "$LOGS_PATH/Rom Inspector.txt"
                 show_message "Error: Failed to retrieve ROM name." 2
                 sleep 1
                 break
-            }
+            fi
             file="/mnt/SDCARD/Roms/$sys_name/$rom_name"
             echo "Selected ZIP ROM: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
 
@@ -1033,39 +1032,39 @@ Manage_zip_roms() {
             fi
 
             action_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
-            [ "$action_idx" = "null" ] || [ -z "$action_idx" ] || [ "$action_idx" = "-1" ] && {
+            if [ "$action_idx" = "null" ] || [ -z "$action_idx" ] || [ "$action_idx" = "-1" ]; then
                 echo "Invalid or no selection in action menu for $rom_name: idx=$action_idx" >> "$LOGS_PATH/Rom Inspector.txt"
                 show_message "Error: Invalid action selection for $rom_name." 2
                 sleep 1
                 echo "  Action: Skipped $rom_name (error: invalid action selection)" >> "$ZIP_ROMS_FILE"
                 skipped_count=$((skipped_count + 1))
                 continue
-            }
+            fi
             action=$(sed -n "$((action_idx + 1))p" "$zip_action_menu" 2>/dev/null)
-            [ -z "$action" ] && {
+            if [ -z "$action" ]; then
                 echo "Error: Failed to retrieve action for index $action_idx" >> "$LOGS_PATH/Rom Inspector.txt"
                 show_message "Error: Failed to retrieve action for $rom_name." 2
                 sleep 1
                 echo "  Action: Skipped $rom_name (error: failed to retrieve action)" >> "$ZIP_ROMS_FILE"
                 skipped_count=$((skipped_count + 1))
                 continue
-            }
+            fi
             echo "Selected action for $rom_name: $action" >> "$LOGS_PATH/Rom Inspector.txt"
 
             case "$action" in
                 "Decompress ZIP")
-                    [ -f "$file" ] || {
+                    if [ ! -f "$file" ]; then
                         echo "Error: File $file does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
                         show_message "Error: File $rom_name does not exist." 2
                         sleep 1
                         echo "  Action: Skipped $rom_name (file does not exist)" >> "$ZIP_ROMS_FILE"
                         skipped_count=$((skipped_count + 1))
                         continue
-                    }
+                    fi
                     show_message "Decompressing $rom_name..." &
                     MESSAGE_PID=$!
-                    unzip -t "$file" >/dev/null 2>&1 && {
-                        unzip -o "$file" -d "/mnt/SDCARD/Roms/$sys_name" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1 && {
+                    if unzip -t "$file" >/dev/null 2>&1; then
+                        if unzip -o "$file" -d "/mnt/SDCARD/Roms/$sys_name" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
                             kill $MESSAGE_PID 2>/dev/null
                             echo "Successfully decompressed $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                             echo "  Action: Decompressed $rom_name" >> "$ZIP_ROMS_FILE"
@@ -1086,27 +1085,27 @@ Manage_zip_roms() {
                                 continue
                             fi
                             keep_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
-                            [ "$keep_idx" = "null" ] || [ -z "$keep_idx" ] || [ "$keep_idx" = "-1" ] && {
+                            if [ "$keep_idx" = "null" ] || [ -z "$keep_idx" ] || [ "$keep_idx" = "-1" ]; then
                                 echo "Invalid or no selection in keep/delete menu for $rom_name: idx=$keep_idx" >> "$LOGS_PATH/Rom Inspector.txt"
                                 show_message "Error: Invalid keep/delete selection for $rom_name." 2
                                 sleep 1
                                 echo "  Action: Kept original ZIP for $rom_name (error: invalid selection)" >> "$ZIP_ROMS_FILE"
                                 continue
-                            }
+                            fi
                             keep_action=$(sed -n "$((keep_idx + 1))p" "$keep_zip_menu" 2>/dev/null)
-                            [ -z "$keep_action" ] && {
+                            if [ -z "$keep_action" ]; then
                                 echo "Error: Failed to retrieve keep/delete action for index $keep_idx" >> "$LOGS_PATH/Rom Inspector.txt"
                                 show_message "Error: Failed to retrieve keep/delete action for $rom_name." 2
                                 sleep 1
                                 echo "  Action: Kept original ZIP for $rom_name (error: failed to retrieve action)" >> "$ZIP_ROMS_FILE"
                                 continue
-                            }
+                            fi
                             echo "Selected keep/delete action for $rom_name: $keep_action" >> "$LOGS_PATH/Rom Inspector.txt"
                             if [ "$keep_action" = "Delete" ]; then
                                 if confirm_deletion "$file" "ZIP ROM"; then
                                     show_message "Deleting $rom_name..." &
                                     MESSAGE_PID=$!
-                                    rm -f "$file" && {
+                                    if rm -f "$file"; then
                                         kill $MESSAGE_PID 2>/dev/null
                                         echo "Deleted original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                         echo "  Action: Decompressed and deleted original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
@@ -1141,13 +1140,13 @@ Manage_zip_roms() {
                                             [ "$cnt" -gt 0 ] && echo "$name ($cnt ZIP files)" >> "$systems_menu"
                                         done < "$zip_counts_file"
                                         printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
-                                    } || {
+                                    else
                                         kill $MESSAGE_PID 2>/dev/null
                                         echo "Error: Failed to delete $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                         show_message "Error: Failed to delete $rom_name." 2
                                         sleep 1
                                         echo "  Action: Decompressed but failed to delete original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
-                                    }
+                                    fi
                                 else
                                     echo "User chose to keep original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                     echo "  Action: Decompressed and kept original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
@@ -1156,36 +1155,36 @@ Manage_zip_roms() {
                                 echo "User chose to keep original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                 echo "  Action: Decompressed and kept original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
                             fi
-                        } || {
+                        else
                             kill $MESSAGE_PID 2>/dev/null
                             echo "Error: Failed to decompress $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                             show_message "Error: Failed to decompress $rom_name." 2
                             sleep 1
                             echo "  Action: Failed to decompress $rom_name" >> "$ZIP_ROMS_FILE"
                             skipped_count=$((skipped_count + 1))
-                        }
-                    } || {
+                        fi
+                    else
                         kill $MESSAGE_PID 2>/dev/null
                         echo "Error: Invalid or corrupted ZIP file: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                         show_message "Error: Invalid ZIP $rom_name." 2
                         sleep 1
                         echo "  Action: Skipped $rom_name (invalid ZIP)" >> "$ZIP_ROMS_FILE"
                         skipped_count=$((skipped_count + 1))
-                    }
+                    fi
                     ;;
                 "Delete ZIP")
-                    [ -f "$file" ] || {
+                    if [ ! -f "$file" ]; then
                         echo "Error: File $file does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
                         show_message "Error: File $rom_name does not exist." 2
                         sleep 1
                         echo "  Action: Skipped $rom_name (file does not exist)" >> "$ZIP_ROMS_FILE"
                         skipped_count=$((skipped_count + 1))
                         continue
-                    }
+                    fi
                     if confirm_deletion "$file" "ZIP ROM"; then
                         show_message "Deleting $rom_name..." &
                         MESSAGE_PID=$!
-                        rm -f "$file" && {
+                        if rm -f "$file"; then
                             kill $MESSAGE_PID 2>/dev/null
                             echo "Deleted ZIP ROM: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                             echo "  Action: Deleted $rom_name" >> "$ZIP_ROMS_FILE"
@@ -1220,13 +1219,13 @@ Manage_zip_roms() {
                                 [ "$cnt" -gt 0 ] && echo "$name ($cnt ZIP files)" >> "$systems_menu"
                             done < "$zip_counts_file"
                             printf "Decompress all ZIP ROMs\nDelete all ZIP ROMs\nDecompress and delete all ZIP ROMs\n" >> "$systems_menu"
-                        } || {
+                        else
                             kill $MESSAGE_PID 2>/dev/null
                             echo "Error: Failed to delete $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                             show_message "Error: Failed to delete $rom_name." 2
                             sleep 1
                             echo "  Action: Failed to delete $rom_name" >> "$ZIP_ROMS_FILE"
-                        }
+                        fi
                     else
                         echo "User cancelled deletion of $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                         echo "  Action: Skipped $rom_name (cancelled deletion)" >> "$ZIP_ROMS_FILE"
@@ -1254,16 +1253,18 @@ Manage_zip_roms() {
     zip_summary=""
     if [ -s "$zip_counts_file" ]; then
         while IFS=':' read -r sys_name count; do
-            [ "$count" -gt 0 ] && zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+            if [ "$count" -gt 0 ]; then
+                zip_summary="$zip_summary$sys_name: $count ZIP file(s);"
+            fi
         done < "$zip_counts_file"
         zip_summary=$(echo "$zip_summary" | sed 's/;$//' | sed 's/;/ - /g')
     fi
 
     echo "ZIP ROM check completed. Found: $zip_count, Decompressed: $decompressed_count, Deleted: $deleted_count, Skipped: $skipped_count" >> "$LOGS_PATH/Rom Inspector.txt"
-    [ -n "$zip_summary" ] && {
+    if [ -n "$zip_summary" ]; then
         echo "Final ZIP ROMs Summary: $zip_summary" >> "$LOGS_PATH/Rom Inspector.txt"
         echo "Final ZIP ROMs Summary: $zip_summary" >> "$ZIP_ROMS_FILE"
-    }
+    fi
     echo "Summary: Found: $zip_count, Decompressed: $decompressed_count, Deleted: $deleted_count, Skipped: $skipped_count" >> "$ZIP_ROMS_FILE"
     show_message "Results saved in /mnt/SDCARD/zip_roms_report.txt" 3
     sleep 0
