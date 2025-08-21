@@ -205,7 +205,7 @@ get_valid_extensions() {
             echo "zip"
             ;;
         "PORTS"|"Ports (PORTS)")
-            echo "zip"
+            echo "zip sh"
             ;;
         "Amiga (AMIGA)"|"Amiga (PUAE)")
             echo "adf zip"
@@ -325,6 +325,94 @@ get_size_thresholds() {
     esac
 }
 
+# Define minimum cover resolution per system (width and height in pixels)
+get_min_cover_resolution() {
+    SYS_NAME="$1"
+    case "$SYS_NAME" in
+        "Game Boy (GB)"|"Super Game Boy (SGB)"|"GB")
+            echo "254" # Minimum 254x254 for Game Boy
+            ;;
+        "Game Boy Color (GBC)"|"GBC")
+            echo "254" # Minimum 254x254 for Game Boy Color
+            ;;
+        "Game Boy Advance (GBA)"|"Game Boy Advance (MGBA)"|"GBA"|"MGBA")
+            echo "480" # Minimum 480x480 for GBA
+            ;;
+        "Nintendo Entertainment System (FC)"|"Famicom Disk System (FDS)"|"FC"|"FDS")
+            echo "320" # Minimum 320x320 for NES/FDS
+            ;;
+        "Super Nintendo Entertainment System (SFC)"|"Super Nintendo Entertainment System (SUPA)"|"SFC"|"SUPA")
+            echo "480" # Minimum 480x480 for SNES
+            ;;
+        "Sega Genesis (MD)"|"Sega Megadrive (MD)"|"MD")
+            echo "480" # Minimum 480x480 for Genesis
+            ;;
+        "Sony PlayStation (PS)"|"PS")
+            echo "640" # Minimum 640x640 for PlayStation
+            ;;
+        "PC Engine (PCE)"|"TurboGrafx-16 (PCE)"|"Super Grafx (SGFX)"|"TurboGrafx-CD (PCECD)"|"PCE"|"SGFX"|"PCECD")
+            echo "320" # Minimum 320x320 for PC Engine
+            ;;
+        "Sega Master System (SMS)"|"SMS")
+            echo "320" # Minimum 320x320 for Master System
+            ;;
+        "Sega Game Gear (GG)"|"GG")
+            echo "254" # Minimum 254x254 for Game Gear
+            ;;
+        "Sega 32X (32X)"|"Sega 32X (THIRTYTWOX)"|"32X"|"THIRTYTWOX")
+            echo "480" # Minimum 480x480 for 32X
+            ;;
+        "Atari 2600 (ATARI)"|"ATARI")
+            echo "200" # Minimum 200x200 for Atari 2600
+            ;;
+        "Atari 5200 (FIFTYTWOHUNDRED)"|"FIFTYTWOHUNDRED")
+            echo "200" # Minimum 200x200 for Atari 5200
+            ;;
+        "Atari Lynx (LYNX)"|"LYNX")
+            echo "254" # Minimum 254x254 for Atari Lynx
+            ;;
+        "Wonderswan Color (WSC)"|"Wonder Swan Color (WSC)"|"WSC")
+            echo "254" # Minimum 254x254 for Wonderswan
+            ;;
+        "Pokemon mini (PKM)"|"Pokémon mini (PKM)"|"PKM")
+            echo "200" # Minimum 200x200 for Pokemon Mini
+            ;;
+        "ARCADE"|"Arcade (FBN)"|"MAME (FBN)")
+            echo "480" # Minimum 480x480 for Arcade
+            ;;
+        "PORTS"|"Ports (PORTS)")
+            echo "480" # Minimum 480x480 for Ports
+            ;;
+        "Amiga (AMIGA)"|"Amiga (PUAE)")
+            echo "480" # Minimum 480x480 for Amiga
+            ;;
+        "Amstrad CPC (CPC)"|"Armstrad CPC (CPC)")
+            echo "320" # Minimum 320x320 for Amstrad CPC
+            ;;
+        "Colecovision (COLECO)")
+            echo "320" # Minimum 320x320 for Colecovision
+            ;;
+        "Commodore 128 (C128)"|"Commodore 64 (C64)"|"Commodore 64 (COMMODORE)"|"Commodore PET (PET)"|"Commodore Plus4 (PLUS4)"|"Commodore VIC20 (VIC)")
+            echo "320" # Minimum 320x320 for Commodore systems
+            ;;
+        "DOS (DOS)")
+            echo "480" # Minimum 480x480 for DOS
+            ;;
+        "Doom (DOOM)"|"Doom (PRBOOM)")
+            echo "480" # Minimum 480x480 for Doom
+            ;;
+        "EasyRPG (EASYRPG)")
+            echo "480" # Minimum 480x480 for EasyRPG
+            ;;
+        "Game & Watch (GW)")
+            echo "200" # Minimum 200x200 for Game & Watch
+            ;;
+        *)
+            echo "480" # Default: Minimum 480x480
+            ;;
+    esac
+}
+
 is_valid_extension() {
     file="$1"
     valid_extensions="$2"
@@ -440,11 +528,19 @@ list_missing_covers() {
         done
 
         if [ "$MISSING_COUNT" -gt 0 ]; then
-            echo "$SYS_NAME - $MISSING_COUNT missing cover(s)" >> /tmp/roms_missing.menu
+            if [ "$MISSING_COUNT" -eq 1 ]; then
+                echo "$SYS_NAME - $MISSING_COUNT missing cover" >> /tmp/roms_missing.menu
+            else
+                echo "$SYS_NAME - $MISSING_COUNT missing covers" >> /tmp/roms_missing.menu
+            fi
             VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
             TOTAL_MISSING_COUNT=$((TOTAL_MISSING_COUNT + MISSING_COUNT))
             echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
-            echo "Missing covers: $MISSING_COUNT" >> "$OUTPUT_FILE"
+            if [ "$MISSING_COUNT" -eq 1 ]; then
+                echo "Missing cover: $MISSING_COUNT" >> "$OUTPUT_FILE"
+            else
+                echo "Missing covers: $MISSING_COUNT" >> "$OUTPUT_FILE"
+            fi
             cat "$TEMP_FILE" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
             mv "$TEMP_FILE" "$SYS_PATH/.cache/missing_covers.txt" 2>/dev/null || {
@@ -2552,8 +2648,9 @@ list_orphaned_files() {
         for FILE in "$SYS_PATH"/*; do
             [ -f "$FILE" ] || continue
             FILE_BASENAME="${FILE##*/}"
-            # Skip bg.png
+            # Skip bg.png and OUTPUT_FILE
             [ "$FILE_BASENAME" = "bg.png" ] && continue
+            [ "$FILE" = "$OUTPUT_FILE" ] && continue
             FILE_NAME="${FILE_BASENAME%.*}"
             FILE_EXT="${FILE_BASENAME##*.}"
             
@@ -2562,7 +2659,10 @@ list_orphaned_files() {
             
             # Skip known system files (excluding .txt)
             case "$FILE_BASENAME" in
-                *.miyoocmd|*.db|*.json|*.config|*.cfg|*.ini) continue ;;
+                *.miyoocmd|*.db|*.json|*.config|*.cfg|*.ini|*.dat|*.backup.dat|*.txt) continue ;;
+                *.cue) 
+                    # Allow .cue for PlayStation
+                    [ "$SYS_NAME" = "Sony PlayStation (PS)" ] && continue ;;
             esac
 
             # Skip if this is a valid ROM file (without extension)
@@ -2630,8 +2730,14 @@ list_orphaned_files() {
             TOTAL_ORPHANED_COUNT=$((TOTAL_ORPHANED_COUNT + ORPHANED_COUNT))
             cat "$TEMP_FILE" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
+            # Create .cache directory if it doesn't exist
+            mkdir -p "$SYS_PATH/.cache" 2>/dev/null || {
+                echo "Error: Failed to create directory $SYS_PATH/.cache" >> "$LOGS_PATH/Rom Inspector.txt"
+                rm -f "$TEMP_FILE"
+                continue
+            }
             mv "$TEMP_FILE" "$SYS_PATH/.cache/orphaned_files.txt" 2>/dev/null || {
-                echo "Warning: Failed to save orphaned files list to $SYS_PATH/.cache/orphaned_files.txt" >> "$LOGS_PATH/Rom Inspector.txt"
+                echo "Error: Failed to save orphaned files list to $SYS_PATH/.cache/orphaned_files.txt" >> "$LOGS_PATH/Rom Inspector.txt"
                 rm -f "$TEMP_FILE"
             }
         else
@@ -2652,6 +2758,9 @@ list_orphaned_files() {
     echo "Systems with orphaned files: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
     echo "Total orphaned files: $TOTAL_ORPHANED_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
     cat /tmp/roms_orphaned.menu >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "Error: Failed to read /tmp/roms_orphaned.menu" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    # Add option to delete all orphaned files
+    echo "Delete all orphaned files ($TOTAL_ORPHANED_COUNT files)" >> /tmp/roms_orphaned.menu
 
     if [ ! -s /tmp/roms_orphaned.menu ]; then
         echo "Error: /tmp/roms_orphaned.menu is empty or does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -2686,6 +2795,191 @@ list_orphaned_files() {
             break
         fi
 
+        # Check if the user selected the "Delete all orphaned files" option
+        total_lines=$(wc -l < /tmp/roms_orphaned.menu)
+        if [ "$idx" -eq "$((total_lines - 1))" ]; then
+            echo "User selected to delete all orphaned files" >> "$LOGS_PATH/Rom Inspector.txt"
+
+            # Confirm deletion of all orphaned files
+            if ! confirm_deletion "all $TOTAL_ORPHANED_COUNT orphaned files" "all orphaned files"; then
+                echo "Deletion of all orphaned files cancelled." >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Deletion of all orphaned files cancelled." 5
+                continue
+            fi
+
+            show_message "Deleting orphaned files..." forever
+            LOADING_PID=$!
+
+            DELETED_COUNT=0
+            FAILED_COUNT=0
+
+            # Delete all orphaned files across all systems
+            for SYS_PATH in "$ROMS_DIR"/*; do
+                [ -d "$SYS_PATH" ] || continue
+                SYS_NAME="${SYS_PATH##*/}"
+                case "$SYS_NAME" in
+                    .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
+                esac
+
+                ORPHANED_FILES_FILE="$SYS_PATH/.cache/orphaned_files.txt"
+                if [ -f "$ORPHANED_FILES_FILE" ] && [ -s "$ORPHANED_FILES_FILE" ]; then
+                    echo "Processing orphaned files for $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+                    while IFS= read -r FILE_BASENAME; do
+                        # Skip empty or invalid lines
+                        [ -z "$FILE_BASENAME" ] && continue
+                        if [ -f "$SYS_PATH/$image_folder/$FILE_BASENAME" ]; then
+                            FILE_TO_DELETE="$SYS_PATH/$image_folder/$FILE_BASENAME"
+                        else
+                            FILE_TO_DELETE="$SYS_PATH/$FILE_BASENAME"
+                        fi
+                        # Ensure the file exists before attempting deletion
+                        if [ -f "$FILE_TO_DELETE" ]; then
+                            if rm -f "$FILE_TO_DELETE" 2>/dev/null; then
+                                echo "Successfully deleted: $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+                                echo "- Deleted: $FILE_BASENAME" >> "$OUTPUT_FILE"
+                                DELETED_COUNT=$((DELETED_COUNT + 1))
+                            else
+                                echo "Error: Failed to delete $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
+                                FAILED_COUNT=$((FAILED_COUNT + 1))
+                            fi
+                        else
+                            echo "Error: File $FILE_TO_DELETE does not exist" >> "$LOGS_PATH/Rom Inspector.txt"
+                            FAILED_COUNT=$((FAILED_COUNT + 1))
+                        fi
+                    done < "$ORPHANED_FILES_FILE"
+
+                    # Remove the orphaned files list
+                    rm -f "$ORPHANED_FILES_FILE" 2>/dev/null
+                fi
+            done
+
+            stop_loading
+
+            # Update counters and rebuild the menu
+            VALID_SYSTEMS_FOUND=0
+            TOTAL_ORPHANED_COUNT=0
+            > /tmp/roms_orphaned.menu
+
+            # Re-scan systems to rebuild the menu
+            for SYS_PATH in "$ROMS_DIR"/*; do
+                [ -d "$SYS_PATH" ] || continue
+                SYS_NAME="${SYS_PATH##*/}"
+                case "$SYS_NAME" in
+                    .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
+                esac
+
+                VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+                [ -z "$VALID_EXTENSIONS" ] && continue
+
+                ORPHANED_COUNT=0
+                TEMP_FILE=$(mktemp)
+
+                # Check system directory
+                for FILE in "$SYS_PATH"/*; do
+                    [ -f "$FILE" ] || continue
+                    FILE_BASENAME="${FILE##*/}"
+                    [ "$FILE_BASENAME" = "bg.png" ] && continue
+                    [ "$FILE" = "$OUTPUT_FILE" ] && continue
+                    FILE_NAME="${FILE_BASENAME%.*}"
+                    FILE_EXT="${FILE_BASENAME##*.}"
+
+                    is_valid_extension "$FILE_BASENAME" "$VALID_EXTENSIONS" && continue
+                    case "$FILE_BASENAME" in
+                        *.miyoocmd|*.db|*.json|*.config|*.cfg|*.ini|*.dat|*.backup.dat|*.txt) continue ;;
+                        *.cue)
+                            [ "$SYS_NAME" = "Sony PlayStation (PS)" ] && continue ;;
+                    esac
+
+                    ROM_EXISTS=false
+                    for EXT in $VALID_EXTENSIONS; do
+                        if [ -f "$SYS_PATH/$FILE_NAME.$EXT" ]; then
+                            ROM_EXISTS=true
+                            break
+                        fi
+                    done
+                    [ "$ROM_EXISTS" = true ] && continue
+
+                    ORPHANED_COUNT=$((ORPHANED_COUNT + 1))
+                    echo "$FILE_BASENAME" >> "$TEMP_FILE"
+                done
+
+                # Check media folder
+                if [ -d "$MEDIA_PATH" ] && [ -r "$MEDIA_PATH" ]; then
+                    for COVER in "$MEDIA_PATH"/*; do
+                        [ -f "$COVER" ] || continue
+                        COVER_BASENAME="${COVER##*/}"
+                        [ "$COVER_BASENAME" = "bg.png" ] && continue
+                        COVER_NAME="${COVER_BASENAME%.*}"
+                        ROM_EXISTS=false
+
+                        for EXT in $VALID_EXTENSIONS; do
+                            if [ -f "$SYS_PATH/$COVER_NAME.$EXT" ]; then
+                                ROM_EXISTS=true
+                                break
+                            fi
+                        done
+
+                        if [ "$ROM_EXISTS" = false ]; then
+                            ORPHANED_COUNT=$((ORPHANED_COUNT + 1))
+                            echo "$COVER_BASENAME" >> "$TEMP_FILE"
+                        fi
+                    done
+                fi
+
+                if [ "$ORPHANED_COUNT" -gt 0 ]; then
+                    if [ "$ORPHANED_COUNT" -eq 1 ]; then
+                        echo "$SYS_NAME - $ORPHANED_COUNT orphaned file" >> /tmp/roms_orphaned.menu
+                        echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+                        echo "Orphaned file: $ORPHANED_COUNT" >> "$OUTPUT_FILE"
+                    else
+                        echo "$SYS_NAME - $ORPHANED_COUNT orphaned files" >> /tmp/roms_orphaned.menu
+                        echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
+                        echo "Orphaned files: $ORPHANED_COUNT" >> "$OUTPUT_FILE"
+                    fi
+                    VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
+                    TOTAL_ORPHANED_COUNT=$((TOTAL_ORPHANED_COUNT + ORPHANED_COUNT))
+                    cat "$TEMP_FILE" >> "$OUTPUT_FILE"
+                    echo "" >> "$OUTPUT_FILE"
+                    # Create .cache directory if it doesn't exist
+                    mkdir -p "$SYS_PATH/.cache" 2>/dev/null || {
+                        echo "Error: Failed to create directory $SYS_PATH/.cache" >> "$LOGS_PATH/Rom Inspector.txt"
+                        rm -f "$TEMP_FILE"
+                        continue
+                    }
+                    mv "$TEMP_FILE" "$SYS_PATH/.cache/orphaned_files.txt" 2>/dev/null || {
+                        echo "Error: Failed to save orphaned files list to $SYS_PATH/.cache/orphaned_files.txt" >> "$LOGS_PATH/Rom Inspector.txt"
+                        rm -f "$TEMP_FILE"
+                    }
+                else
+                    rm -f "$TEMP_FILE"
+                fi
+            done
+
+            # Add the "Delete all" option again if there are still orphaned files
+            if [ "$VALID_SYSTEMS_FOUND" -gt 0 ]; then
+                echo "Delete all orphaned files ($TOTAL_ORPHANED_COUNT files)" >> /tmp/roms_orphaned.menu
+            fi
+
+            if [ "$DELETED_COUNT" -gt 0 ]; then
+                echo "Successfully deleted $DELETED_COUNT orphaned files." >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Successfully deleted $DELETED_COUNT orphaned files." 5
+            fi
+            if [ "$FAILED_COUNT" -gt 0 ]; then
+                echo "Failed to delete $FAILED_COUNT orphaned files." >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "Failed to delete $FAILED_COUNT orphaned files." 5
+            fi
+            if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
+                echo "No systems with orphaned files remain." >> "$LOGS_PATH/Rom Inspector.txt"
+                show_message "No systems with orphaned files remain." 5
+                return 0
+            fi
+
+            echo "Remaining systems with orphaned files: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
+            echo "Remaining total orphaned files: $TOTAL_ORPHANED_COUNT" >> "$LOGS_PATH/Rom Inspector.txt"
+            continue
+        fi
+
         selected_line=$(sed -n "$((idx + 1))p" /tmp/roms_orphaned.menu 2>/dev/null)
         selected_sys=$(echo "$selected_line" | sed -E 's/ - (.*)$//')
 
@@ -2697,9 +2991,6 @@ list_orphaned_files() {
             show_message "No orphaned files found for $selected_sys." 5
             continue
         fi
-
-        show_message "Loading orphaned files for $selected_sys..." forever
-        LOADING_PID=$!
 
         # Log the contents of the orphaned files list
         echo "Orphaned files list contents for $selected_sys:" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -2753,7 +3044,11 @@ list_orphaned_files() {
             echo "Attempting to delete: $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
 
             if confirm_deletion "$FILE_TO_DELETE" "orphaned file"; then
-                if rm -f "$FILE_TO_DELETE" 2>/dev/null; then
+                show_message "Deleting orphaned files..." forever
+                LOADING_PID=$!
+
+                if [ -f "$FILE_TO_DELETE" ] && rm -f "$FILE_TO_DELETE" 2>/dev/null; then
+                    stop_loading
                     echo "Successfully deleted orphaned file: $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
                     echo "System: $selected_sys" >> "$OUTPUT_FILE"
                     echo "- Deleted: $selected_file" >> "$OUTPUT_FILE"
@@ -2778,13 +3073,12 @@ list_orphaned_files() {
                         if [ "$VALID_SYSTEMS_FOUND" -eq 0 ] || [ ! -s /tmp/roms_orphaned.menu ]; then
                             echo "No systems with orphaned files remain" >> "$LOGS_PATH/Rom Inspector.txt"
                             show_message "No systems with orphaned files remain." 5
-                            stop_loading
-                            echo "Exiting list_orphaned_files function" >> "$LOGS_PATH/Rom Inspector.txt"
                             return 0
                         fi
                         break
                     fi
                 else
+                    stop_loading
                     echo "Error: Failed to delete $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
                     show_message "Error: Failed to delete $selected_file." 5
                 fi
@@ -2793,8 +3087,6 @@ list_orphaned_files() {
                 show_message "Deletion cancelled for $selected_file" 3
             fi
         done
-
-        stop_loading
     done
 
     echo "Exiting list_orphaned_files function" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -2867,7 +3159,8 @@ verify_cover_resolutions() {
             continue
         }
 
-        echo "Verifying cover resolutions for system: $SYS_NAME" >> "$LOGS_PATH/Rom Inspector.txt"
+        MIN_RESOLUTION=$(get_min_cover_resolution "$SYS_NAME")
+        echo "Verifying cover resolutions for system: $SYS_NAME (Minimum resolution: ${MIN_RESOLUTION}x${MIN_RESOLUTION})" >> "$LOGS_PATH/Rom Inspector.txt"
         MEDIA_PATH="$SYS_PATH/$image_folder"
         PROBLEMATIC_COUNT=0
         TEMP_FILE=$(mktemp)
@@ -2877,20 +3170,40 @@ verify_cover_resolutions() {
             for COVER in "$MEDIA_PATH"/*.png; do
                 [ -f "$COVER" ] && [ -r "$COVER" ] || continue
                 COVER_BASENAME="${COVER##*/}"
-                RESOLUTION=$(identify -format "%w x %h" "$COVER" 2>/dev/null || echo "unknown")
-                if [ "$RESOLUTION" = "unknown" ]; then
-                    echo "Warning: Failed to get resolution for $COVER" >> "$LOGS_PATH/Rom Inspector.txt"
-                    continue
+
+                # Extract width and height from PNG IHDR chunk
+                width=$((16#$(dd if="$COVER" bs=1 skip=16 count=4 2>/dev/null | xxd -p | tr -d '\n')))
+                height=$((16#$(dd if="$COVER" bs=1 skip=20 count=4 2>/dev/null | xxd -p | tr -d '\n')))
+
+                # Fallback to file command if dd/xxd method fails
+                if [ -z "$width" ] || [ -z "$height" ] || [ "$width" -eq 0 ] || [ "$height" -eq 0 ]; then
+                    resolution=$(file "$COVER" 2>/dev/null | grep -oE '[0-9]+ x [0-9]+')
+                    if [ -n "$resolution" ]; then
+                        width=$(echo "$resolution" | cut -d' ' -f1)
+                        height=$(echo "$resolution" | cut -d' ' -f3)
+                        echo "Resolution via file command: $width x $height" >> "$LOGS_PATH/Rom Inspector.txt"
+                    else
+                        echo "Warning: Failed to get resolution for $COVER" >> "$LOGS_PATH/Rom Inspector.txt"
+                        continue
+                    fi
                 fi
 
-                WIDTH=$(echo "$RESOLUTION" | cut -d' ' -f1)
-                HEIGHT=$(echo "$RESOLUTION" | cut -d' ' -f3)
-                EXPECTED_RESOLUTION="480x480"  # Example resolution, adjust as needed
-                if [ "$RESOLUTION" != "$EXPECTED_RESOLUTION" ] || [ "$WIDTH" -lt 100 ] || [ "$HEIGHT" -lt 100 ]; then
+                RESOLUTION="$width x $height"
+                WIDTH=$width
+                HEIGHT=$height
+
+                # Debug output for resolution detection
+                echo "Debug: $COVER_BASENAME - detected resolution: $width x $height" >> "$LOGS_PATH/Rom Inspector.txt"
+
+                # Check for problematic resolutions
+                if [ "$WIDTH" -lt "$MIN_RESOLUTION" ] || [ "$HEIGHT" -lt "$MIN_RESOLUTION" ] || \
+                   [ "$WIDTH" -gt 2000 ] || [ "$HEIGHT" -gt 2000 ] || \
+                   [ $((WIDTH * 100 / HEIGHT)) -lt 50 ] || [ $((WIDTH * 100 / HEIGHT)) -gt 200 ]; then
                     PROBLEMATIC_COUNT=$((PROBLEMATIC_COUNT + 1))
                     echo "$COVER_BASENAME - $RESOLUTION" >> "$TEMP_FILE"
                     echo "Problematic cover: $COVER_BASENAME ($RESOLUTION)" >> "$LOGS_PATH/Rom Inspector.txt"
                 fi
+                
                 FILE_COUNT=$((FILE_COUNT + 1))
                 if [ "$FILE_COUNT" -gt "$MAX_FILES" ]; then
                     echo "Warning: Too many cover files in $SYS_NAME, limiting to $MAX_FILES" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -2900,15 +3213,16 @@ verify_cover_resolutions() {
         fi
 
         if [ "$PROBLEMATIC_COUNT" -gt 0 ]; then
-            echo "$SYS_NAME - $PROBLEMATIC_COUNT problematic cover(s)" >> /tmp/cover_resolutions.menu
+            [ "$PROBLEMATIC_COUNT" -eq 1 ] && COVER_TEXT="cover" || COVER_TEXT="covers"
+            echo "$SYS_NAME - $PROBLEMATIC_COUNT problematic $COVER_TEXT" >> /tmp/cover_resolutions.menu
             VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
             TOTAL_PROBLEMATIC_COVERS=$((TOTAL_PROBLEMATIC_COVERS + PROBLEMATIC_COUNT))
             echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
-            echo "Problematic covers: $PROBLEMATIC_COUNT" >> "$OUTPUT_FILE"
+            echo "Problematic $COVER_TEXT: $PROBLEMATIC_COUNT" >> "$OUTPUT_FILE"
             cat "$TEMP_FILE" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
             mv "$TEMP_FILE" "$SYS_PATH/.cache/problematic_covers.txt" 2>/dev/null || {
-                echo "Warning: Failed to save problematic covers list to $SYS_PATH/.cache/problematic_covers.txt" >> "$LOGS_PATH/Rom Inspector.txt"
+                echo "Warning: Failed to save problematic $COVER_TEXT list to $SYS_PATH/.cache/problematic_covers.txt" >> "$LOGS_PATH/Rom Inspector.txt"
                 rm -f "$TEMP_FILE"
             }
         else
@@ -2921,13 +3235,14 @@ verify_cover_resolutions() {
 
     if [ "$VALID_SYSTEMS_FOUND" -eq 0 ]; then
         echo "No systems with problematic cover resolutions found." >> "$LOGS_PATH/Rom Inspector.txt"
-        echo "No problematic cover resolutions found." >> "$OUTPUT_FILE"
-        show_message "No problematic cover resolutions found." 5
+        echo "No problematic covers found." >> "$OUTPUT_FILE"
+        show_message "No problematic covers found." 5
         return 0
     fi
 
-    echo "Systems with problematic covers: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
-    echo "Total problematic covers: $TOTAL_PROBLEMATIC_COVERS" >> "$LOGS_PATH/Rom Inspector.txt"
+    [ "$TOTAL_PROBLEMATIC_COVERS" -eq 1 ] && COVER_TEXT="cover" || COVER_TEXT="covers"
+    echo "Systems with problematic $COVER_TEXT: $VALID_SYSTEMS_FOUND" >> "$LOGS_PATH/Rom Inspector.txt"
+    echo "Total problematic $COVER_TEXT: $TOTAL_PROBLEMATIC_COVERS" >> "$LOGS_PATH/Rom Inspector.txt"
     cat /tmp/cover_resolutions.menu >> "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null || echo "Error: Failed to read /tmp/cover_resolutions.menu" >> "$LOGS_PATH/Rom Inspector.txt"
 
     if [ ! -s /tmp/cover_resolutions.menu ]; then
@@ -2975,9 +3290,6 @@ verify_cover_resolutions() {
             continue
         fi
 
-        show_message "Loading problematic covers for $selected_sys..." forever
-        LOADING_PID=$!
-
         while true; do
             minui-list --disable-auto-sleep \
                 --item-key problematic_cover_items \
@@ -2989,51 +3301,32 @@ verify_cover_resolutions() {
                 --write-value state
             MINUI_EXIT_CODE=$?
 
+            stop_loading
+
             if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
                 echo "User cancelled problematic covers menu for $selected_sys (BACK pressed)" >> "$LOGS_PATH/Rom Inspector.txt"
                 break
             fi
             if [ ! -f /tmp/minui-output ]; then
-                echo "Error: minui-list output file /tmp/minui-output not found for problematic covers" >> "$LOGS_PATH/Rom Inspector.txt"
+                echo "Error: minui-list output file /tmp/minui-output not found" >> "$LOGS_PATH/Rom Inspector.txt"
                 show_message "Error: Failed to read menu output." 5
                 break
             fi
 
             file_idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
-            if [ "$file_idx" = "null" ] || [ -z "$file_idx" ] || [ "$file_idx" = "-1" ]; then
-                echo "Invalid or no selection for problematic cover: idx=$file_idx" >> "$LOGS_PATH/Rom Inspector.txt"
-                break
-            fi
-
-            selected_file=$(sed -n "$((file_idx + 1))p" "$PROBLEMATIC_COVERS_FILE" 2>/dev/null)
-            selected_cover=$(echo "$selected_file" | cut -d' ' -f1)
-            COVER_TO_DELETE="$SYS_PATH/$image_folder/$selected_cover"
-
-            if confirm_deletion "$COVER_TO_DELETE" "cover"; then
-                if rm -f "$COVER_TO_DELETE" 2>/dev/null; then
-                    echo "Deleted problematic cover: $COVER_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
-                    echo "System: $selected_sys" >> "$OUTPUT_FILE"
-                    echo "- Deleted: $selected_file" >> "$OUTPUT_FILE"
-                    show_message "Deleted: $selected_cover" 3
-                    grep -v "^$selected_file$" "$PROBLEMATIC_COVERS_FILE" > "${PROBLEMATIC_COVERS_FILE}.tmp" && mv "${PROBLEMATIC_COVERS_FILE}.tmp" "$PROBLEMATIC_COVERS_FILE"
-                    if [ ! -s "$PROBLEMATIC_COVERS_FILE" ]; then
-                        rm -f "$PROBLEMATIC_COVERS_FILE"
-                        break
-                    fi
-                else
-                    echo "Error: Failed to delete $COVER_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
-                    show_message "Error: Failed to delete $selected_cover." 5
-                fi
+            if [ "$file_idx" != "null" ] && [ -n "$file_idx" ] && [ "$file_idx" != "-1" ]; then
+                selected_cover=$(sed -n "$((file_idx + 1))p" "$PROBLEMATIC_COVERS_FILE" 2>/dev/null | cut -d' ' -f1)
+                echo "User selected cover $selected_cover for $selected_sys with button A, no action taken (SELECT ignored)" >> "$LOGS_PATH/Rom Inspector.txt"
+                continue
             else
-                show_message "Deletion cancelled for $selected_cover" 3
+                echo "User viewed problematic covers for $selected_sys, no valid selection made" >> "$LOGS_PATH/Rom Inspector.txt"
             fi
         done
-
-        stop_loading
     done
 
+    [ "$TOTAL_PROBLEMATIC_COVERS" -eq 1 ] && COVER_TEXT="cover" || COVER_TEXT="covers"
     echo "Exiting verify_cover_resolutions function" >> "$LOGS_PATH/Rom Inspector.txt"
-    show_message "Cover resolutions report saved to $OUTPUT_FILE" 5
+    show_message "Cover resolutions report saved to $OUTPUT_FILE ($TOTAL_PROBLEMATIC_COVERS problematic $COVER_TEXT)." 5
     return 0
 }
 

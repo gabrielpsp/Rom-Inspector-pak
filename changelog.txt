@@ -97,3 +97,33 @@ Added /tmp/rom_list.menu to the cleanup function to ensure it is removed on scri
 Affected: statistics function, new menu (/tmp/rom_list.menu), log ($LOGS_PATH/Rom Inspector.txt), cleanup function.
 Purpose: Provide a detailed view of ROMs for each system, improving usability by allowing users to inspect individual ROM names.
 Commit Message: "Add ROM list display on system selection in View total ROMs per system, with new /tmp/rom_list.menu and cleanup."
+
+V0.9.0
+Change Description (list_missing_covers)
+
+Fixed singular/plural usage of "cover" and "covers" in the list_missing_covers function to ensure consistency with the number of missing covers detected.
+Affected: Menu (/tmp/roms_missing.menu) and report (missing_covers.txt).
+Purpose: Improve clarity and grammatical accuracy in output text by using "cover" for one missing cover and "covers" for multiple missing covers.
+Commit Message: "Fix singular/plural usage of 'cover'/'covers' in list_missing_covers for consistent output."
+
+Change Description (list_orphaned_files)
+
+Added .sh file extension as a valid format for the PORTS (Portmasters) system in the list_orphaned_files function, ensuring .sh files are not flagged as orphaned files.
+Affected: get_valid_extensions function, list_orphaned_files function, menu (/tmp/roms_orphaned.menu), report (orphaned_files.txt).
+Purpose: Support .sh files as valid for the PORTS system to improve compatibility and accuracy in orphaned file detection.
+Commit Message: "Add .sh extension as valid for PORTS system in list_orphaned_files to prevent flagging as orphaned."
+
+Change Description (General)
+
+Addressed various bugs and improved overall system stability across multiple functions.
+Affected: All functions, log ($LOGS_PATH/Rom Inspector.txt).
+Purpose: Enhance reliability and robustness of the ROM-INSPECTOR-PAK system by resolving minor issues and optimizing performance.
+
+Change Description (verify_cover_resolution)
+
+Improved the logic of the verify_cover_resolution function by creating a system-specific list of recommended cover dimensions. Each system now has tailored resolution requirements for covers, ensuring accurate detection of non-compliant cover images.
+Generates a report (cover_resolution_report.txt) listing covers that do not meet the recommended dimensions per system.
+Affected: verify_cover_resolution function, new report (cover_resolution_report.txt), log ($LOGS_PATH/Rom Inspector.txt).
+Purpose: Enhance cover resolution verification by providing system-specific dimension guidelines, improving accuracy and user feedback.
+Commit Message: "Enhance verify_cover_resolution with system-specific recommended cover dimensions and generate detailed report."
+
