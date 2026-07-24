@@ -1,33 +1,32 @@
 ROM-INSPECTOR-PAK CHANGELOG
+
 Author: Gabrielpsp
 
 V0.1.0-beta
+
 Initial release
 
 V0.4.0-beta
-Change Description (list_missing_covers)
 
+Change Description (list_missing_covers)
 Updated list_missing_covers to use "cover" (singular) when one cover is missing and "covers" (plural) when multiple covers are missing.
 Affected: Menu (/tmp/roms_missing.menu) and report (missing_covers.txt).
 Purpose: Improve clarity of output text.
 Commit Message: "Use singular 'cover' for one missing cover and plural 'covers' for multiple in list_missing_covers."
 
 Change Description (list_orphaned_files)
-
 Updated list_orphaned_files to use "file" (singular) when one orphaned file is detected and "files" (plural) when multiple files are detected.
 Affected: Menu (/tmp/roms_orphaned.menu) and report (orphaned_files.txt).
 Purpose: Enhance output clarity with correct singular/plural terminology.
 Commit Message: "Use singular 'file' for one orphaned file and plural 'files' for multiple in list_orphaned_files."
 
 Change Description (statistics)
-
 Updated View total ROMs per system in statistics function to use "ROM" (singular) when one ROM is detected and "ROMs" (plural) when multiple ROMs are detected.
 Affected: Menu (/tmp/total_roms.menu).
 Purpose: Improve clarity of output text by using correct singular/plural terminology.
 Commit Message: "Use singular 'ROM' for one ROM and plural 'ROMs' for multiple in View total ROMs per system."
 
 Change Description (analyze_disk_usage)
-
 Updated analyze_disk_usage to suppress user-facing error messages when show_message fails to display system details or total disk usage, ensuring a seamless return to the system list menu without displaying errors.
 Added cleanup of /tmp/minui-output before relaunching minui-list to prevent stale data issues.
 Modified the system list menu (/tmp/disk_usage.menu) to show only the system name and total size on a single line, requiring the user to select a system to view detailed information (ROMs, Covers, Total size) instead of displaying all details in the list.
@@ -37,14 +36,12 @@ Purpose: Eliminate unwanted error messages, improve menu loop reliability, and s
 Commit Message: "Suppress error messages on show_message failure, ensure seamless system list menu reload, and display system details on selection instead of in the list in analyze_disk_usage."
 
 Change Description (General)
-
 Added CHD file format for PS1 as valid extension.
 Affected: get_valid_extensions function.
 Purpose: Support additional PlayStation ROM format.
 Commit Message: "Add CHD file format for PlayStation in get_valid_extensions."
 
 New function (check_rom_names)
-
 Added new function check_rom_names to the main menu to verify if ROM names adhere to an expected format, excluding special characters (e.g., #, %, $, *, +, ?, =, &, |, <, >, !, @, square brackets) or multiple consecutive spaces.
 Generates a report (rom_names_report.txt) listing ROMs with problematic names per system.
 Provides an interactive menu to view problematic ROM names, with options to rename (to an automatic cleaned-up version) or delete them.
@@ -54,7 +51,6 @@ Purpose: Ensure ROM names follow a standard format for consistency and compatibi
 Commit Message: "Add check_roms_names function to verify ROM names, generate report, and provide rename/delete options with singular/plural terminology."
 
 New function (Manage_zip_roms)
-
 Added new function Manage_zip_roms to the main menu to scan ZIP ROMs, generate a report (zip_roms_report.txt), and provide options to decompress, delete, or skip ZIP files.
 Updated Check_zip_roms to display loading screen (show_message) during decompression and deletion actions by removing fixed durations and synchronizing closure with kill $MESSAGE_PID.
 Uses "file" (singular) for one ZIP file and "files" (plural) for multiple in menus (/tmp/systems_zip.menu, /tmp/roms_zip.menu) and report (zip_roms_report.txt).
@@ -63,8 +59,8 @@ Purpose: Enable management of ZIP ROMs with user-friendly options and improve UX
 Commit Message: "Add Check_zip_roms to manage ZIP ROMs with decompress/delete options and display loading screen during actions."
 
 V0.4.1-beta
-Change Description (Manage_zip_roms)
 
+Change Description (Manage_zip_roms)
 Fixed syntax error at line 1296 in Manage_zip_roms function causing unexpected "}" (expecting "fi"). Replaced command groups (e.g., rm -f "$file" && { ... } || { ... }) with explicit if/else statements to improve clarity and ensure proper syntax.
 Validated all if statements have corresponding fi closures and removed potential stray braces. Simplified nested logic for decompression and deletion actions to reduce error likelihood.
 Affected: Manage_zip_roms function, log ($LOGS_PATH/Rom Inspector.txt), report (zip_roms_report.txt).
@@ -72,25 +68,23 @@ Purpose: Resolve syntax error to ensure script runs without crashing and improve
 Commit Message: "Fix syntax error in Manage_zip_roms by replacing command groups with explicit if/else statements and ensuring proper if/fi pairing."
 
 V0.4.2-beta
-Change Description (list_orphaned_files)
 
+Change Description (list_orphaned_files)
 Added exclusion for bg.png files to prevent them from being detected as orphaned files in both system directories (/mnt/SDCARD/Roms/<SYSTEM>) and media directories (/mnt/SDCARD/Roms/<SYSTEM>/.media or .res).
 Included .txt files in system directories (/mnt/SDCARD/Roms/<SYSTEM>) as orphaned files, removing their exclusion from the list of system files to be skipped.
-Fixed issue where systems with no remaining orphaned files were still displayed in the systems menu (/tmp/roms_orphaned.menu) after deleting all orphaned files. 
+Fixed issue where systems with no remaining orphaned files were still displayed in the systems menu (/tmp/roms_orphaned.menu) after deleting all orphaned files.
 Added logic to decrement VALID_SYSTEMS_FOUND and check if the menu is empty after deletion, exiting the function early with a message if no systems with orphaned files remain.
 Affected: list_orphaned_files function, menu (/tmp/roms_orphaned.menu), log ($LOGS_PATH/Rom Inspector.txt), report (orphaned_files.txt).
 Purpose: Enhance accuracy of orphaned file detection by excluding bg.png, including .txt files as orphaned, and ensuring the systems menu is updated correctly after file deletions.
 Commit Message: "Exclude bg.png from orphaned files, include .txt files as orphaned in system directories, and fix menu update issue in list_orphaned_files to remove systems with no orphaned files."
 
 Change Description (General)
-
 Added .cue file format for PS1 as a valid extension.
 Affected: get_valid_extensions function.
 Purpose: Support additional PlayStation ROM format for better compatibility.
 Commit Message: "Add .cue file format for PlayStation in get_valid_extensions."
 
 Change Description (statistics)
-
 Enhanced View total ROMs per system in statistics function to display a list of ROM names when a system is selected, instead of returning to the "Statistics" menu.
 Added new menu (/tmp/rom_list.menu) to list all valid ROMs for the selected system, with a "BACK" option to return to the system list.
 Added /tmp/rom_list.menu to the cleanup function to ensure it is removed on script exit.
@@ -99,31 +93,57 @@ Purpose: Provide a detailed view of ROMs for each system, improving usability by
 Commit Message: "Add ROM list display on system selection in View total ROMs per system, with new /tmp/rom_list.menu and cleanup."
 
 V0.9.0
-Change Description (list_missing_covers)
 
+Change Description (list_missing_covers)
 Fixed singular/plural usage of "cover" and "covers" in the list_missing_covers function to ensure consistency with the number of missing covers detected.
 Affected: Menu (/tmp/roms_missing.menu) and report (missing_covers.txt).
 Purpose: Improve clarity and grammatical accuracy in output text by using "cover" for one missing cover and "covers" for multiple missing covers.
 Commit Message: "Fix singular/plural usage of 'cover'/'covers' in list_missing_covers for consistent output."
 
 Change Description (list_orphaned_files)
-
 Added .sh file extension as a valid format for the PORTS (Portmasters) system in the list_orphaned_files function, ensuring .sh files are not flagged as orphaned files.
 Affected: get_valid_extensions function, list_orphaned_files function, menu (/tmp/roms_orphaned.menu), report (orphaned_files.txt).
 Purpose: Support .sh files as valid for the PORTS system to improve compatibility and accuracy in orphaned file detection.
 Commit Message: "Add .sh extension as valid for PORTS system in list_orphaned_files to prevent flagging as orphaned."
 
 Change Description (General)
-
 Addressed various bugs and improved overall system stability across multiple functions.
 Affected: All functions, log ($LOGS_PATH/Rom Inspector.txt).
 Purpose: Enhance reliability and robustness of the ROM-INSPECTOR-PAK system by resolving minor issues and optimizing performance.
 
 Change Description (verify_cover_resolution)
-
 Improved the logic of the verify_cover_resolution function by creating a system-specific list of recommended cover dimensions. Each system now has tailored resolution requirements for covers, ensuring accurate detection of non-compliant cover images.
 Generates a report (cover_resolution_report.txt) listing covers that do not meet the recommended dimensions per system.
 Affected: verify_cover_resolution function, new report (cover_resolution_report.txt), log ($LOGS_PATH/Rom Inspector.txt).
 Purpose: Enhance cover resolution verification by providing system-specific dimension guidelines, improving accuracy and user feedback.
 Commit Message: "Enhance verify_cover_resolution with system-specific recommended cover dimensions and generate detailed report."
 
+V1.0.0
+
+Change Description (launch.sh - critical portability fix, "No boot" issue)
+Fixed three loops that used bash-only process substitution ("done < <(find ...)") in check_roms_sizes / analyze_disk_usage and check_roms_names. Because the pak's shebang is "#!/bin/sh", NextUI executes it with dash / busybox ash, neither of which understand this bash syntax. The result was a hard parse error on the ENTIRE script, so the pak failed to launch at all, with no log ever written. This is the root cause reported in Issue #2 ("No boot", NextUI v6.60, ROM Inspector v0.9.0).
+Replaced each occurrence with a POSIX-compliant pattern: "find ... > tmpfile" followed by "while IFS= read -r VAR; do ... done < tmpfile", which preserves variable values set inside the loop (unlike piping into the loop, which would run it in a subshell) without relying on any bash-only feature.
+Verified the fix by running the full script through both "sh -n" and "dash -n" with zero syntax errors (previously failed immediately at the first occurrence).
+Affected: check_roms_sizes / analyze_disk_usage loops, check_roms_names function, log ($LOGS_PATH/Rom Inspector.txt).
+Purpose: Restore pak startup on NextUI/TrimUI Brick.
+Commit Message: "Fix critical POSIX portability bug: replace bash-only process substitution with temp-file redirection, resolving pak boot failure (closes #2)."
+
+Change Description (launch.sh - startup ordering)
+Reordered the startup sequence so that LOGS_PATH is created (mkdir -p) before the very first log line is written. Previously the first "Initializing: ..." log entry was written before the logs directory existed, so on a completely fresh install that first line was silently lost.
+Affected: startup section at the top of launch.sh.
+Purpose: Make logging reliable from the very first run, which also makes future bug reports easier to diagnose.
+Commit Message: "Create LOGS_PATH before first log write to avoid silent logging failure on fresh install."
+
+New feature (Trash / safety net for deletions)
+Added a trash system: ROMs, covers, orphaned files, ZIP archives, and files removed via the ROM name cleanup tool are no longer permanently deleted immediately. They are moved to "Tools/tg5040/Rom Inspector Trash" by a new trash_file() helper, which falls back to a real "rm -f" only if the move itself fails (e.g. no space left), so behaviour is never worse than before.
+Added a new "Manage Trash" entry in the main menu showing the number of files and total size currently in the trash, with an "Empty trash" action that still requires the existing confirm_deletion confirmation dialog before permanently freeing the space.
+Updated user-facing confirmation messages from "Deleted: X" to "Moved to trash: X" so it is clear the action is reversible.
+Implemented using only utilities already used elsewhere in the script (mv, mkdir, date, find) - no new dependency was introduced.
+Affected: confirm_deletion-driven deletions across check_roms_sizes, remove_duplicate_roms, list_orphaned_files, check_roms_names, Manage_zip_roms; new functions trash_file(), trash_size_bytes(), empty_trash(), manage_trash(); main menu (/tmp/main_menu.menu).
+Purpose: Give users a real safety net against accidental deletions, addressing the single biggest risk of a tool whose main job is deleting files.
+Commit Message: "Add trash-based deletion (trash_file) and Manage Trash menu, replacing permanent rm -f across all delete paths."
+
+Change Description (General - stable release)
+Promoted the project from beta to its first stable release, 1.0.0, following the portability fix that resolved the "No boot" issue and the addition of the trash safety net.
+Affected: pak.json (version bump), README.md.
+Purpose: Reflect that the pak now starts reliably on NextUI and includes a non-destructive deletion workflow suitable for general use.
