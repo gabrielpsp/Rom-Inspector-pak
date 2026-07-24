@@ -11,6 +11,19 @@ ORPHANED_FILES_FILE="/mnt/SDCARD/orphaned_files.txt"
 DISK_USAGE_FILE="/mnt/SDCARD/disk_usage_report.txt"
 ROM_NAMES_FILE="/mnt/SDCARD/rom_names_report.txt"
 ZIP_ROMS_FILE="/mnt/SDCARD/zip_roms_report.txt"
+TRASH_DIR="$USERDATA_PATH/Tools/tg5040/Rom Inspector Trash"
+
+# Create necessary directories FIRST, before any logging attempt.
+# (Previously the very first log line was written before LOGS_PATH existed,
+# so it silently failed on a fresh install.)
+mkdir -p "$LOGS_PATH" 2>/dev/null || {
+    # Nowhere to log yet, so just bail out.
+    exit 1
+}
+mkdir -p "$USERDATA_PATH/Tools/tg5040/Artworks Checker" 2>/dev/null || {
+    echo "Error: Failed to create directory $USERDATA_PATH/Tools/tg5040/Artworks Checker" >> "$LOGS_PATH/Rom Inspector.txt"
+    exit 1
+}
 
 # Reduced logging: Only log critical initialization details
 echo "Initializing: USERDATA_PATH=$USERDATA_PATH, LOGS_PATH=$LOGS_PATH, PAK_DIR=$PAK_DIR, CACHE_FILE=$CACHE_FILE, EXPORT_FILE=$EXPORT_FILE, STATS_FILE=$STATS_FILE, ROM_SIZES_FILE=$ROM_SIZES_FILE, ORPHANED_FILES_FILE=$ORPHANED_FILES_FILE, ROM_NAMES_FILE=$ROM_NAMES_FILE, ZIP_ROMS_FILE=$ZIP_ROMS_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -20,16 +33,6 @@ if [ ! -d "$PAK_DIR" ]; then
     echo "Error: PAK_DIR ($PAK_DIR) does not exist or is not a directory." >> "$LOGS_PATH/Rom Inspector.txt"
     exit 1
 fi
-
-# Create necessary directories
-mkdir -p "$USERDATA_PATH/Tools/tg5040/Artworks Checker" 2>/dev/null || {
-    echo "Error: Failed to create directory $USERDATA_PATH/Tools/tg5040/Artworks Checker" >> "$LOGS_PATH/Rom Inspector.txt"
-    exit 1
-}
-mkdir -p "$LOGS_PATH" 2>/dev/null || {
-    echo "Error: Failed to create directory $LOGS_PATH" >> "$LOGS_PATH/Rom Inspector.txt"
-    exit 1
-}
 
 # Clear old log
 rm -f "$LOGS_PATH/Rom Inspector.txt" 2>/dev/null
@@ -146,6 +149,81 @@ confirm_deletion() {
 
     echo "Deletion confirmed for $file_to_delete" >> "$LOGS_PATH/Rom Inspector.txt"
     rm -f "$confirm_menu" 2>/dev/null
+    return 0
+}
+
+# Move a file to the pak's trash folder instead of deleting it permanently.
+# Uses only "mv"/"mkdir"/"date" (already used elsewhere in the script), so it
+# adds no new dependency. Falls back to a real "rm -f" if the move fails
+# (e.g. no space left, or TRASH_DIR could not be created), so behaviour is
+# never worse than before.
+# Usage: trash_file "/path/to/file" ; echo $?   (0 = success)
+trash_file() {
+    file_to_trash="$1"
+
+    if [ -z "$file_to_trash" ] || [ ! -e "$file_to_trash" ]; then
+        echo "trash_file: nothing to trash for '$file_to_trash'" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    fi
+
+    if ! mkdir -p "$TRASH_DIR" 2>/dev/null; then
+        echo "trash_file: could not create $TRASH_DIR, deleting permanently instead: $file_to_trash" >> "$LOGS_PATH/Rom Inspector.txt"
+        rm -f "$file_to_trash" 2>/dev/null
+        return $?
+    fi
+
+    base_name="${file_to_trash##*/}"
+    stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo now)"
+    dest="$TRASH_DIR/${stamp}_${base_name}"
+    suffix=1
+    while [ -e "$dest" ]; do
+        dest="$TRASH_DIR/${stamp}_${suffix}_${base_name}"
+        suffix=$((suffix + 1))
+    done
+
+    if mv "$file_to_trash" "$dest" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+        echo "Moved to trash: $file_to_trash -> $dest" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 0
+    fi
+
+    echo "trash_file: mv failed, deleting permanently instead: $file_to_trash" >> "$LOGS_PATH/Rom Inspector.txt"
+    rm -f "$file_to_trash" 2>/dev/null
+    return $?
+}
+
+# Total size (bytes) currently sitting in the trash folder, 0 if empty/missing.
+trash_size_bytes() {
+    if [ ! -d "$TRASH_DIR" ]; then
+        echo 0
+        return 0
+    fi
+    total=0
+    TRASH_LIST="/tmp/ri_trash_list_$$"
+    find "$TRASH_DIR" -maxdepth 1 -type f > "$TRASH_LIST" 2>/dev/null
+    while IFS= read -r f; do
+        sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        total=$((total + sz))
+    done < "$TRASH_LIST"
+    rm -f "$TRASH_LIST" 2>/dev/null
+    echo "$total"
+}
+
+# Empty the trash folder after an explicit confirmation from the user.
+empty_trash() {
+    if [ ! -d "$TRASH_DIR" ] || [ -z "$(ls -A "$TRASH_DIR" 2>/dev/null)" ]; then
+        show_message "Trash is already empty." 3
+        return 0
+    fi
+
+    TRASH_COUNT=$(find "$TRASH_DIR" -maxdepth 1 -type f | wc -l 2>/dev/null || echo 0)
+    if confirm_deletion "$TRASH_DIR" "trash ($TRASH_COUNT files)"; then
+        rm -rf "${TRASH_DIR:?}"/* 2>/dev/null
+        echo "Trash emptied: $TRASH_COUNT files permanently deleted." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Trash emptied ($TRASH_COUNT files deleted)." 4
+    else
+        echo "Empty trash cancelled by user." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Empty trash cancelled." 3
+    fi
     return 0
 }
 
@@ -900,7 +978,7 @@ Manage_zip_roms() {
                                 while IFS= read -r file; do
                                     if [ -f "$file" ]; then
                                         rom_name=$(basename "$file")
-                                        if rm -f "$file"; then
+                                        if trash_file "$file"; then
                                             echo "Deleted ZIP ROM: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                             echo "  Action: Deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
                                             deleted_count=$((deleted_count + 1))
@@ -970,7 +1048,7 @@ Manage_zip_roms() {
                                                 echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                                 echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
                                                 decompressed_count=$((decompressed_count + 1))
-                                                if rm -f "$file"; then
+                                                if trash_file "$file"; then
                                                     echo "Deleted original ZIP: $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                                     echo "  Action: Decompressed and deleted $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
                                                     deleted_count=$((deleted_count + 1))
@@ -1201,7 +1279,7 @@ Manage_zip_roms() {
                                 if confirm_deletion "$file" "ZIP ROM"; then
                                     show_message "Deleting $rom_name..." &
                                     MESSAGE_PID=$!
-                                    if rm -f "$file"; then
+                                    if trash_file "$file"; then
                                         kill $MESSAGE_PID 2>/dev/null
                                         echo "Deleted original ZIP: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                         echo "  Action: Decompressed and deleted original ZIP for $rom_name" >> "$ZIP_ROMS_FILE"
@@ -1280,7 +1358,7 @@ Manage_zip_roms() {
                     if confirm_deletion "$file" "ZIP ROM"; then
                         show_message "Deleting $rom_name..." &
                         MESSAGE_PID=$!
-                        if rm -f "$file"; then
+                        if trash_file "$file"; then
                             kill $MESSAGE_PID 2>/dev/null
                             echo "Deleted ZIP ROM: $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                             echo "  Action: Deleted $rom_name" >> "$ZIP_ROMS_FILE"
@@ -1594,11 +1672,11 @@ check_roms_sizes() {
 
             ROM_TO_DELETE="$SYS_PATH/$selected_rom"
             if confirm_deletion "$ROM_TO_DELETE" "ROM"; then
-                if rm -f "$ROM_TO_DELETE" 2>/dev/null; then
+                if trash_file "$ROM_TO_DELETE"; then
                     echo "Deleted ROM: $ROM_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
                     echo "System: $selected_sys" >> "$OUTPUT_FILE"
                     echo "- Deleted: $selected_line" >> "$OUTPUT_FILE"
-                    show_message "Deleted: $selected_rom" 3
+                    show_message "Moved to trash: $selected_rom" 3
                     # Refresh the list
                     grep -v "^$selected_rom " "$TEMP_FILE" > "${TEMP_FILE}.tmp" && mv "${TEMP_FILE}.tmp" "$TEMP_FILE"
                 else
@@ -1826,12 +1904,12 @@ remove_duplicate_roms() {
 
                 ROM_TO_DELETE="$SYS_PATH/$selected_file"
                 if confirm_deletion "$ROM_TO_DELETE" "ROM"; then
-                    if rm -f "$ROM_TO_DELETE" 2>/dev/null; then
+                    if trash_file "$ROM_TO_DELETE"; then
                         echo "Deleted ROM: $ROM_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
                         echo "System: $selected_sys" >> "$OUTPUT_FILE"
                         echo "- Deleted: $selected_file" >> "$OUTPUT_FILE"
                         TOTAL_DUPLICATES_REMOVED=$((TOTAL_DUPLICATES_REMOVED + 1))
-                        show_message "Deleted: $selected_file" 3
+                        show_message "Moved to trash: $selected_file" 3
 
                         # Rebuild the list of duplicates for the current system
                         > /tmp/rom_names.txt
@@ -2415,7 +2493,12 @@ analyze_disk_usage() {
         FILE_COUNT=0
 
         # Calculate ROMs size
-        while IFS= read -r -d '' ROM; do
+        # NOTE: process substitution "< <(...)" is a bashism and causes a hard
+        # parse error under /bin/sh (dash / busybox ash), which prevents the
+        # whole script from running at all. Use a temp file instead.
+        FIND_LIST="/tmp/ri_find_list_$$"
+        find "$SYS_PATH" -maxdepth 1 -type f > "$FIND_LIST" 2>/dev/null
+        while IFS= read -r ROM; do
             ROM_BASENAME="${ROM##*/}"
             case "$ROM_BASENAME" in
                 .*|*.txt|*.dat|*.backup|*.m3u|*.cue|*.sh|*.ttf|*.png|*.p8.png) continue ;;
@@ -2433,7 +2516,8 @@ analyze_disk_usage() {
                     break
                 }
             fi
-        done < <(find "$SYS_PATH" -maxdepth 1 -type f -print0)
+        done < "$FIND_LIST"
+        rm -f "$FIND_LIST" 2>/dev/null
 
         # Skip systems with less than 1 MB of ROMs
         if [ "$ROM_SIZE" -lt "$MIN_ROM_SIZE" ]; then
@@ -2444,14 +2528,17 @@ analyze_disk_usage() {
         # Calculate covers size
         MEDIA_PATH="$SYS_PATH/$image_folder"
         if [ -d "$MEDIA_PATH" ] && [ -r "$MEDIA_PATH" ]; then
-            while IFS= read -r -d '' COVER; do
+            FIND_LIST_COVER="/tmp/ri_find_list_cover_$$"
+            find "$MEDIA_PATH" -maxdepth 1 -type f -name "*.png" > "$FIND_LIST_COVER" 2>/dev/null
+            while IFS= read -r COVER; do
                 SIZE=$(stat -c%s "$COVER" 2>/dev/null || echo 0)
                 [ "$SIZE" -eq 0 ] && {
                     echo "Warning: Failed to get size for $COVER" >> "$LOGS_PATH/Rom Inspector.txt"
                     continue
                 }
                 COVER_SIZE=$((COVER_SIZE + SIZE))
-            done < <(find "$MEDIA_PATH" -maxdepth 1 -type f -name "*.png" -print0)
+            done < "$FIND_LIST_COVER"
+            rm -f "$FIND_LIST_COVER" 2>/dev/null
         fi
 
         TOTAL_SYSTEM_SIZE=$((ROM_SIZE + COVER_SIZE))
@@ -2834,7 +2921,7 @@ list_orphaned_files() {
                         fi
                         # Ensure the file exists before attempting deletion
                         if [ -f "$FILE_TO_DELETE" ]; then
-                            if rm -f "$FILE_TO_DELETE" 2>/dev/null; then
+                            if trash_file "$FILE_TO_DELETE"; then
                                 echo "Successfully deleted: $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
                                 echo "System: $SYS_NAME" >> "$OUTPUT_FILE"
                                 echo "- Deleted: $FILE_BASENAME" >> "$OUTPUT_FILE"
@@ -3047,12 +3134,12 @@ list_orphaned_files() {
                 show_message "Deleting orphaned files..." forever
                 LOADING_PID=$!
 
-                if [ -f "$FILE_TO_DELETE" ] && rm -f "$FILE_TO_DELETE" 2>/dev/null; then
+                if [ -f "$FILE_TO_DELETE" ] && trash_file "$FILE_TO_DELETE"; then
                     stop_loading
                     echo "Successfully deleted orphaned file: $FILE_TO_DELETE" >> "$LOGS_PATH/Rom Inspector.txt"
                     echo "System: $selected_sys" >> "$OUTPUT_FILE"
                     echo "- Deleted: $selected_file" >> "$OUTPUT_FILE"
-                    show_message "Deleted: $selected_file" 3
+                    show_message "Moved to trash: $selected_file" 3
                     # Remove the deleted file from the list
                     grep -v "^$selected_file$" "$ORPHANED_FILES_FILE" > "${ORPHANED_FILES_FILE}.tmp" && mv "${ORPHANED_FILES_FILE}.tmp" "$ORPHANED_FILES_FILE"
                     # Update the menu with the new count
@@ -3406,6 +3493,8 @@ check_roms_names() {
         FILE_COUNT=0
 
         # Find all ROMs in the system directory and process them safely
+        FIND_LIST_NAMES="/tmp/ri_find_list_names_$$"
+        find "$SYS_PATH" -maxdepth 1 -type f > "$FIND_LIST_NAMES" 2>/dev/null
         while IFS= read -r ROM; do
             [ -f "$ROM" ] && [ -r "$ROM" ] || {
                 echo "DEBUG: Skipping unreadable file: $ROM" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -3440,7 +3529,8 @@ check_roms_names() {
                     break
                 fi
             fi
-        done < <(find "$SYS_PATH" -maxdepth 1 -type f)
+        done < "$FIND_LIST_NAMES"
+        rm -f "$FIND_LIST_NAMES" 2>/dev/null
 
         if [ "$PROBLEMATIC_COUNT" -gt 0 ]; then
             VALID_SYSTEMS_FOUND=$((VALID_SYSTEMS_FOUND + 1))
@@ -3773,11 +3863,11 @@ check_roms_names() {
                     ;;
                 "Delete ROM")
                     if confirm_deletion "$ROM_TO_RENAME" "ROM"; then
-                        if rm -f "$ROM_TO_RENAME" 2>/dev/null; then
+                        if trash_file "$ROM_TO_RENAME"; then
                             echo "Deleted ROM: $ROM_TO_RENAME" >> "$LOGS_PATH/Rom Inspector.txt"
                             echo "System: $selected_sys" >> "$OUTPUT_FILE"
                             echo "- Deleted: $selected_file" >> "$OUTPUT_FILE"
-                            show_message "Deleted: $selected_file" 3
+                            show_message "Moved to trash: $selected_file" 3
                             
                             # Log the content of PROBLEMATIC_NAMES_FILE before update
                             echo "DEBUG: Content of $PROBLEMATIC_NAMES_FILE before update:" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -3934,6 +4024,54 @@ check_roms_names() {
     return 0
 }
 
+# Show trash status and offer to empty it. Deleted ROMs/covers/orphaned
+# files land here instead of being wiped immediately (see trash_file()).
+manage_trash() {
+    echo "=== Entering manage_trash ===" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    if [ ! -d "$TRASH_DIR" ] || [ -z "$(ls -A "$TRASH_DIR" 2>/dev/null)" ]; then
+        show_message "Trash is empty." 4
+        return 0
+    fi
+
+    TRASH_COUNT=$(find "$TRASH_DIR" -maxdepth 1 -type f | wc -l 2>/dev/null || echo 0)
+    TRASH_BYTES=$(trash_size_bytes)
+    TRASH_MB=$(echo "$TRASH_BYTES" | awk '{printf "%.1f", $1/1024/1024}')
+
+    > /tmp/trash.menu
+    echo "Empty trash ($TRASH_COUNT files, ${TRASH_MB} MB)" >> /tmp/trash.menu
+    echo "Back" >> /tmp/trash.menu
+
+    minui-list --disable-auto-sleep \
+        --item-key trash_menu \
+        --file /tmp/trash.menu \
+        --format text \
+        --cancel-text "BACK" \
+        --title "Trash: $TRASH_COUNT files / ${TRASH_MB} MB" \
+        --write-location /tmp/minui-output \
+        --write-value state
+    MINUI_EXIT_CODE=$?
+
+    if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+        rm -f /tmp/trash.menu 2>/dev/null
+        return 0
+    fi
+
+    idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+    choice=$(sed -n "$((idx + 1))p" /tmp/trash.menu 2>/dev/null)
+    rm -f /tmp/trash.menu 2>/dev/null
+
+    case "$choice" in
+        Empty\ trash*)
+            empty_trash
+            ;;
+        *)
+            echo "Trash menu: no action taken" >> "$LOGS_PATH/Rom Inspector.txt"
+            ;;
+    esac
+    return 0
+}
+
 # Main menu
 > /tmp/main_menu.menu || {
     echo "Error: Failed to create /tmp/main_menu.menu" >> "$LOGS_PATH/Rom Inspector.txt"
@@ -3948,6 +4086,7 @@ echo "Verify cover resolutions" >> /tmp/main_menu.menu
 echo "Check ROMs names" >> /tmp/main_menu.menu
 echo "Manage ZIP ROMs" >> /tmp/main_menu.menu
 echo "Statistics" >> /tmp/main_menu.menu
+echo "Manage Trash" >> /tmp/main_menu.menu
 echo "Exit" >> /tmp/main_menu.menu
 
 while true; do
@@ -4004,6 +4143,9 @@ while true; do
             ;;
         "Statistics")
             statistics
+            ;;
+        "Manage Trash")
+            manage_trash
             ;;
         "Exit")
             echo "User selected Exit" >> "$LOGS_PATH/Rom Inspector.txt"
