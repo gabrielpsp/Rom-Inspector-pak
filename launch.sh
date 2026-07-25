@@ -11,6 +11,7 @@ ORPHANED_FILES_FILE="/mnt/SDCARD/orphaned_files.txt"
 DISK_USAGE_FILE="/mnt/SDCARD/disk_usage_report.txt"
 ROM_NAMES_FILE="/mnt/SDCARD/rom_names_report.txt"
 ZIP_ROMS_FILE="/mnt/SDCARD/zip_roms_report.txt"
+INVENTORY_FILE="/mnt/SDCARD/collection_inventory.txt"
 TRASH_DIR="$USERDATA_PATH/Tools/tg5040/Rom Inspector Trash"
 
 # Create necessary directories FIRST, before any logging attempt.
@@ -90,7 +91,7 @@ cleanup() {
     else
         echo "No cache file found on exit: $CACHE_FILE"
     fi
-    rm -f /tmp/stay_awake /tmp/platforms.menu /tmp/main_menu.menu /tmp/minui-output /tmp/roms_missing.menu /tmp/roms_missing_temp.menu /tmp/duplicates.menu /tmp/roms_duplicates.menu /tmp/rom_files.menu /tmp/rom_names.txt /tmp/rom_names_only.txt /tmp/statistics.menu /tmp/total_roms.menu /tmp/covers_percentage.menu /tmp/rom_sizes.menu /tmp/rom_sizes_temp.menu /tmp/roms_orphaned.menu /tmp/systems_zip.menu /tmp/roms_zip.menu /tmp/zip_action.menu /tmp/keep_zip.menu /tmp/loading_pid /tmp/rom_list.menu 2>/dev/null
+    rm -f /tmp/stay_awake /tmp/platforms.menu /tmp/main_menu.menu /tmp/minui-output /tmp/roms_missing.menu /tmp/roms_missing_temp.menu /tmp/duplicates.menu /tmp/roms_duplicates.menu /tmp/rom_files.menu /tmp/rom_names.txt /tmp/rom_names_only.txt /tmp/statistics.menu /tmp/total_roms.menu /tmp/covers_percentage.menu /tmp/rom_sizes.menu /tmp/rom_sizes_temp.menu /tmp/roms_orphaned.menu /tmp/systems_zip.menu /tmp/roms_zip.menu /tmp/zip_action.menu /tmp/keep_zip.menu /tmp/loading_pid /tmp/rom_list.menu /tmp/trash.menu /tmp/restore.menu /tmp/ri_find_list_* /tmp/ri_find_list_cover_* /tmp/ri_find_list_names_* /tmp/ri_trash_list_* /tmp/ri_restore_list_* /tmp/ri_inventory_body_* /tmp/ri_inventory_list_* /tmp/ri_inventory_sys_* 2>/dev/null
     echo "Cleaned up temporary files."
 }
 trap cleanup EXIT INT TERM HUP QUIT
@@ -182,6 +183,9 @@ trash_file() {
     done
 
     if mv "$file_to_trash" "$dest" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+        # Remember where this file came from so it can be restored later
+        # (see restore_file()). A plain text sidecar, no new dependency.
+        printf '%s' "$file_to_trash" > "${dest}.origin" 2>/dev/null
         echo "Moved to trash: $file_to_trash -> $dest" >> "$LOGS_PATH/Rom Inspector.txt"
         return 0
     fi
@@ -199,7 +203,7 @@ trash_size_bytes() {
     fi
     total=0
     TRASH_LIST="/tmp/ri_trash_list_$$"
-    find "$TRASH_DIR" -maxdepth 1 -type f > "$TRASH_LIST" 2>/dev/null
+    find "$TRASH_DIR" -maxdepth 1 -type f ! -name "*.origin" > "$TRASH_LIST" 2>/dev/null
     while IFS= read -r f; do
         sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
         total=$((total + sz))
@@ -215,7 +219,7 @@ empty_trash() {
         return 0
     fi
 
-    TRASH_COUNT=$(find "$TRASH_DIR" -maxdepth 1 -type f | wc -l 2>/dev/null || echo 0)
+    TRASH_COUNT=$(find "$TRASH_DIR" -maxdepth 1 -type f ! -name "*.origin" | wc -l 2>/dev/null || echo 0)
     if confirm_deletion "$TRASH_DIR" "trash ($TRASH_COUNT files)"; then
         rm -rf "${TRASH_DIR:?}"/* 2>/dev/null
         echo "Trash emptied: $TRASH_COUNT files permanently deleted." >> "$LOGS_PATH/Rom Inspector.txt"
@@ -223,6 +227,177 @@ empty_trash() {
     else
         echo "Empty trash cancelled by user." >> "$LOGS_PATH/Rom Inspector.txt"
         show_message "Empty trash cancelled." 3
+    fi
+    return 0
+}
+
+# Restore a single trashed file to its original location, using the
+# ".origin" sidecar written by trash_file(). If the original folder no
+# longer exists it is recreated; if a file already exists at the original
+# path, the restored file gets a " (restored)" suffix instead of
+# overwriting anything. Sets RESTORED_DEST on success.
+# Usage: restore_file "/path/in/trash/xxx_game.gba" ; echo $?
+restore_file() {
+    trashed_file="$1"
+    origin_sidecar="${trashed_file}.origin"
+    RESTORED_DEST=""
+
+    if [ ! -f "$trashed_file" ]; then
+        echo "restore_file: '$trashed_file' not found in trash" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    fi
+
+    if [ ! -f "$origin_sidecar" ]; then
+        echo "restore_file: no origin info for '$trashed_file', cannot restore automatically" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    fi
+
+    original_path="$(cat "$origin_sidecar" 2>/dev/null)"
+    if [ -z "$original_path" ]; then
+        echo "restore_file: empty origin info for '$trashed_file'" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
+    fi
+
+    original_dir="${original_path%/*}"
+    mkdir -p "$original_dir" 2>/dev/null
+
+    dest="$original_path"
+    if [ -e "$dest" ]; then
+        base_no_ext="${original_path%.*}"
+        ext="${original_path##*.}"
+        if [ "$base_no_ext" = "$original_path" ]; then
+            dest="${original_path} (restored)"
+        else
+            dest="${base_no_ext} (restored).${ext}"
+        fi
+        suffix=1
+        while [ -e "$dest" ]; do
+            if [ "$base_no_ext" = "$original_path" ]; then
+                dest="${original_path} (restored ${suffix})"
+            else
+                dest="${base_no_ext} (restored ${suffix}).${ext}"
+            fi
+            suffix=$((suffix + 1))
+        done
+    fi
+
+    if mv "$trashed_file" "$dest" 2>>"$LOGS_PATH/Rom Inspector.txt"; then
+        rm -f "$origin_sidecar" 2>/dev/null
+        echo "Restored: $trashed_file -> $dest" >> "$LOGS_PATH/Rom Inspector.txt"
+        RESTORED_DEST="$dest"
+        return 0
+    fi
+
+    echo "restore_file: mv failed for '$trashed_file' -> '$dest'" >> "$LOGS_PATH/Rom Inspector.txt"
+    return 1
+}
+
+# Interactive menu: pick a file sitting in the trash and put it back where
+# it came from.
+restore_from_trash() {
+    echo "=== Entering restore_from_trash ===" >> "$LOGS_PATH/Rom Inspector.txt"
+
+    if [ ! -d "$TRASH_DIR" ] || [ -z "$(ls -A "$TRASH_DIR" 2>/dev/null)" ]; then
+        show_message "Trash is empty." 3
+        return 0
+    fi
+
+    RESTORE_LIST="/tmp/ri_restore_list_$$"
+    find "$TRASH_DIR" -maxdepth 1 -type f ! -name "*.origin" > "$RESTORE_LIST" 2>/dev/null
+
+    if [ ! -s "$RESTORE_LIST" ]; then
+        rm -f "$RESTORE_LIST" 2>/dev/null
+        show_message "Trash is empty." 3
+        return 0
+    fi
+
+    > /tmp/restore.menu
+    while IFS= read -r f; do
+        echo "${f##*/}" >> /tmp/restore.menu
+    done < "$RESTORE_LIST"
+    echo "Back" >> /tmp/restore.menu
+
+    minui-list --disable-auto-sleep \
+        --item-key restore_menu \
+        --file /tmp/restore.menu \
+        --format text \
+        --cancel-text "BACK" \
+        --title "Restore from Trash" \
+        --write-location /tmp/minui-output \
+        --write-value state
+    MINUI_EXIT_CODE=$?
+
+    if [ "$MINUI_EXIT_CODE" -ne 0 ]; then
+        rm -f /tmp/restore.menu "$RESTORE_LIST" 2>/dev/null
+        return 0
+    fi
+
+    idx=$(jq -r '.selected' /tmp/minui-output 2>/dev/null)
+    choice=$(sed -n "$((idx + 1))p" /tmp/restore.menu 2>/dev/null)
+
+    if [ "$choice" = "Back" ] || [ -z "$choice" ]; then
+        rm -f /tmp/restore.menu "$RESTORE_LIST" 2>/dev/null
+        return 0
+    fi
+
+    # /tmp/restore.menu and $RESTORE_LIST were built line-for-line in the
+    # same order, so the same index maps to the matching full path.
+    trashed_full_path=$(sed -n "$((idx + 1))p" "$RESTORE_LIST")
+    rm -f /tmp/restore.menu "$RESTORE_LIST" 2>/dev/null
+
+    if [ -z "$trashed_full_path" ]; then
+        show_message "Could not find that file in trash." 3
+        return 0
+    fi
+
+    if restore_file "$trashed_full_path"; then
+        show_message "Restored: $RESTORED_DEST" 4
+    else
+        show_message "Restore failed, see logs." 4
+    fi
+    return 0
+}
+
+# Check whether there is enough free space at "$2" to extract the zip
+# archive "$1". Uses only "unzip -l" (already a hard dependency of
+# Manage_zip_roms) and "df" (a standard system utility, no new dependency).
+# Adds a 5% safety margin (minimum 5 MB) on top of the archive's own
+# uncompressed size. If the size can't be determined, or df can't be read,
+# it fails open (returns 0 / "OK") so it never blocks extraction that
+# would previously have worked.
+# Usage: check_disk_space_for_zip "/path/file.zip" "/dest/dir" ; echo $?
+check_disk_space_for_zip() {
+    zip_file="$1"
+    dest_dir="$2"
+
+    needed=$(unzip -l "$zip_file" 2>/dev/null | tail -1 | awk '{print $1}')
+    case "$needed" in
+        ''|*[!0-9]*) needed=0 ;;
+    esac
+
+    if [ "$needed" -eq 0 ]; then
+        echo "check_disk_space_for_zip: could not determine uncompressed size of '$zip_file', skipping check" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 0
+    fi
+
+    avail_kb=$(df -Pk "$dest_dir" 2>/dev/null | awk 'NR==2 {print $4}')
+    case "$avail_kb" in
+        ''|*[!0-9]*)
+            echo "check_disk_space_for_zip: could not read free space for '$dest_dir', skipping check" >> "$LOGS_PATH/Rom Inspector.txt"
+            return 0
+            ;;
+    esac
+    avail_bytes=$((avail_kb * 1024))
+
+    margin=$((needed / 20))
+    [ "$margin" -lt 5242880 ] && margin=5242880
+    required=$((needed + margin))
+
+    if [ "$avail_bytes" -lt "$required" ]; then
+        needed_mb=$((required / 1024 / 1024))
+        avail_mb=$((avail_bytes / 1024 / 1024))
+        echo "check_disk_space_for_zip: not enough space for '$zip_file' (~${needed_mb}MB needed, ${avail_mb}MB available on $dest_dir)" >> "$LOGS_PATH/Rom Inspector.txt"
+        return 1
     fi
     return 0
 }
@@ -912,7 +1087,11 @@ Manage_zip_roms() {
                                 if [ -f "$file" ]; then
                                     rom_name=$(basename "$file")
                                     if unzip -t "$file" >/dev/null 2>&1; then
-                                        if unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
+                                        if ! check_disk_space_for_zip "$file" "$dir"; then
+                                            echo "Error: Not enough free space to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                            echo "  Action: Skipped (not enough free space) $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                            skipped_count=$((skipped_count + 1))
+                                        elif unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
                                             echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                             echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
                                             decompressed_count=$((decompressed_count + 1))
@@ -1044,7 +1223,11 @@ Manage_zip_roms() {
                                     if [ -f "$file" ]; then
                                         rom_name=$(basename "$file")
                                         if unzip -t "$file" >/dev/null 2>&1; then
-                                            if unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
+                                            if ! check_disk_space_for_zip "$file" "$dir"; then
+                                                echo "Error: Not enough free space to decompress $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                                                echo "  Action: Skipped (not enough free space) $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
+                                                skipped_count=$((skipped_count + 1))
+                                            elif unzip -o "$file" -d "$dir" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
                                                 echo "Successfully decompressed $rom_name in $sys_name" >> "$LOGS_PATH/Rom Inspector.txt"
                                                 echo "  Action: Decompressed $rom_name in $sys_name" >> "$ZIP_ROMS_FILE"
                                                 decompressed_count=$((decompressed_count + 1))
@@ -1238,7 +1421,14 @@ Manage_zip_roms() {
                     show_message "Decompressing $rom_name..." &
                     MESSAGE_PID=$!
                     if unzip -t "$file" >/dev/null 2>&1; then
-                        if unzip -o "$file" -d "/mnt/SDCARD/Roms/$sys_name" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
+                        if ! check_disk_space_for_zip "$file" "/mnt/SDCARD/Roms/$sys_name"; then
+                            kill $MESSAGE_PID 2>/dev/null
+                            echo "Error: Not enough free space to decompress $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
+                            show_message "Error: Not enough free space to decompress $rom_name." 2
+                            sleep 1
+                            echo "  Action: Skipped $rom_name (not enough free space)" >> "$ZIP_ROMS_FILE"
+                            skipped_count=$((skipped_count + 1))
+                        elif unzip -o "$file" -d "/mnt/SDCARD/Roms/$sys_name" >> "$LOGS_PATH/Rom Inspector.txt" 2>&1; then
                             kill $MESSAGE_PID 2>/dev/null
                             echo "Successfully decompressed $rom_name" >> "$LOGS_PATH/Rom Inspector.txt"
                             echo "  Action: Decompressed $rom_name" >> "$ZIP_ROMS_FILE"
@@ -4034,11 +4224,12 @@ manage_trash() {
         return 0
     fi
 
-    TRASH_COUNT=$(find "$TRASH_DIR" -maxdepth 1 -type f | wc -l 2>/dev/null || echo 0)
+    TRASH_COUNT=$(find "$TRASH_DIR" -maxdepth 1 -type f ! -name "*.origin" | wc -l 2>/dev/null || echo 0)
     TRASH_BYTES=$(trash_size_bytes)
     TRASH_MB=$(echo "$TRASH_BYTES" | awk '{printf "%.1f", $1/1024/1024}')
 
     > /tmp/trash.menu
+    echo "Restore a file" >> /tmp/trash.menu
     echo "Empty trash ($TRASH_COUNT files, ${TRASH_MB} MB)" >> /tmp/trash.menu
     echo "Back" >> /tmp/trash.menu
 
@@ -4062,6 +4253,10 @@ manage_trash() {
     rm -f /tmp/trash.menu 2>/dev/null
 
     case "$choice" in
+        Restore\ a\ file*)
+            restore_from_trash
+            manage_trash
+            ;;
         Empty\ trash*)
             empty_trash
             ;;
@@ -4069,6 +4264,97 @@ manage_trash() {
             echo "Trash menu: no action taken" >> "$LOGS_PATH/Rom Inspector.txt"
             ;;
     esac
+    return 0
+}
+
+# Export a full manifest of the collection: every valid ROM (matched the
+# same way as everywhere else in the script, via get_valid_extensions /
+# is_valid_extension), grouped by system, to a single text file. Useful
+# as a plain-text backup of "what I own" before reformatting an SD card,
+# or to diff against another card. Uses only utilities already used
+# elsewhere in the script (find, cat) - no new dependency.
+export_collection_inventory() {
+    echo "=== Entering export_collection_inventory ===" >> "$LOGS_PATH/Rom Inspector.txt"
+    ROMS_DIR="/mnt/SDCARD/Roms"
+
+    if [ ! -d "$ROMS_DIR" ] || [ ! -r "$ROMS_DIR" ]; then
+        echo "Error: ROMS_DIR ($ROMS_DIR) does not exist or is not readable." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: ROMs directory not found or not readable." 4
+        return 1
+    fi
+
+    if [ ! -w "/mnt/SDCARD" ]; then
+        echo "Error: No write access to /mnt/SDCARD." >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Cannot write to /mnt/SDCARD." 4
+        return 1
+    fi
+
+    show_message "Building collection inventory..." forever
+    LOADING_PID=$!
+
+    BODY_FILE="/tmp/ri_inventory_body_$$"
+    IL_LIST="/tmp/ri_inventory_list_$$"
+    SYS_LINES="/tmp/ri_inventory_sys_$$"
+    > "$BODY_FILE" 2>/dev/null
+
+    TOTAL_GAMES=0
+    TOTAL_SYSTEMS=0
+
+    for SYS_PATH in "$ROMS_DIR"/*; do
+        [ -d "$SYS_PATH" ] || continue
+        [ -r "$SYS_PATH" ] || continue
+        SYS_NAME="${SYS_PATH##*/}"
+
+        case "$SYS_NAME" in
+            .media|.res|*.backup|"0) BitPal (BITPAL)"|"0) Favorites (CUSTOM)") continue ;;
+        esac
+
+        VALID_EXTENSIONS=$(get_valid_extensions "$SYS_NAME")
+        [ -z "$VALID_EXTENSIONS" ] && continue
+
+        find "$SYS_PATH" -maxdepth 1 -type f > "$IL_LIST" 2>/dev/null
+        SYS_COUNT=0
+        > "$SYS_LINES"
+        while IFS= read -r rom; do
+            rom_name="${rom##*/}"
+            if is_valid_extension "$rom_name" "$VALID_EXTENSIONS"; then
+                echo "  - ${rom_name%.*}" >> "$SYS_LINES"
+                SYS_COUNT=$((SYS_COUNT + 1))
+            fi
+        done < "$IL_LIST"
+
+        if [ "$SYS_COUNT" -gt 0 ]; then
+            {
+                echo "== $SYS_NAME ($SYS_COUNT game(s)) =="
+                cat "$SYS_LINES"
+                echo ""
+            } >> "$BODY_FILE"
+            TOTAL_GAMES=$((TOTAL_GAMES + SYS_COUNT))
+            TOTAL_SYSTEMS=$((TOTAL_SYSTEMS + 1))
+        fi
+    done
+    rm -f "$IL_LIST" "$SYS_LINES" 2>/dev/null
+
+    {
+        echo "=== Collection Inventory ==="
+        echo "Generated: $(date 2>/dev/null)"
+        echo "Total: $TOTAL_GAMES game(s) across $TOTAL_SYSTEMS system(s)"
+        echo ""
+        cat "$BODY_FILE"
+    } > "$INVENTORY_FILE" 2>>"$LOGS_PATH/Rom Inspector.txt"
+    WRITE_OK=$?
+    rm -f "$BODY_FILE" 2>/dev/null
+
+    stop_loading
+
+    if [ "$WRITE_OK" -ne 0 ]; then
+        echo "Error: Failed to write $INVENTORY_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+        show_message "Error: Failed to create collection_inventory.txt." 4
+        return 1
+    fi
+
+    echo "Collection inventory exported: $TOTAL_GAMES game(s) across $TOTAL_SYSTEMS system(s) -> $INVENTORY_FILE" >> "$LOGS_PATH/Rom Inspector.txt"
+    show_message "Inventory saved: $TOTAL_GAMES games / $TOTAL_SYSTEMS systems (collection_inventory.txt)" 5
     return 0
 }
 
@@ -4087,6 +4373,7 @@ echo "Check ROMs names" >> /tmp/main_menu.menu
 echo "Manage ZIP ROMs" >> /tmp/main_menu.menu
 echo "Statistics" >> /tmp/main_menu.menu
 echo "Manage Trash" >> /tmp/main_menu.menu
+echo "Export Collection Inventory" >> /tmp/main_menu.menu
 echo "Exit" >> /tmp/main_menu.menu
 
 while true; do
@@ -4146,6 +4433,9 @@ while true; do
             ;;
         "Manage Trash")
             manage_trash
+            ;;
+        "Export Collection Inventory")
+            export_collection_inventory
             ;;
         "Exit")
             echo "User selected Exit" >> "$LOGS_PATH/Rom Inspector.txt"

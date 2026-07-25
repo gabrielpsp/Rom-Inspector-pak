@@ -147,3 +147,31 @@ Change Description (General - stable release)
 Promoted the project from beta to its first stable release, 1.0.0, following the portability fix that resolved the "No boot" issue and the addition of the trash safety net.
 Affected: pak.json (version bump), README.md.
 Purpose: Reflect that the pak now starts reliably on NextUI and includes a non-destructive deletion workflow suitable for general use.
+
+V1.1.0
+
+New feature (Restore from trash)
+Added the ability to restore a file straight back to its original location instead of only being able to empty the trash. trash_file() now writes a small ".origin" sidecar text file next to every trashed item, recording its original absolute path.
+Added restore_file() to move a trashed file back, recreating its original folder if needed, and automatically renaming it to "<name> (restored)" instead of overwriting anything if a file already exists at that path.
+Added restore_from_trash(), an interactive menu listing every file currently in the trash; picking one restores it immediately (no confirmation needed, since restoring is a non-destructive action).
+Added a "Restore a file" entry to the "Manage Trash" menu, alongside "Empty trash". Trash file/size counts now correctly exclude the ".origin" sidecars.
+Implemented using only utilities already used elsewhere in the script (mv, mkdir, cat, printf, find) - no new dependency was introduced.
+Affected: trash_file(), new functions restore_file() and restore_from_trash(), manage_trash() menu, cleanup() temp file list.
+Purpose: Make the trash safety net actually useful for recovering from a mistake, not just a delayed-delete buffer.
+Commit Message: "Add restore-from-trash (restore_file/restore_from_trash) using .origin sidecars, plus Restore menu entry."
+
+New feature (Free space check before ZIP decompression)
+Added check_disk_space_for_zip(), which reads the archive's uncompressed size from "unzip -l" (already a dependency of Manage_zip_roms) and compares it against the free space reported by "df -Pk" on the destination directory, with a 5% safety margin (minimum 5 MB). If there isn't enough room, extraction is skipped instead of attempted, the attempt is logged as "Skipped (not enough free space)" in zip_roms_report.txt, and (in the interactive single-ROM flow) the user sees an explicit error message instead of a silent partial extraction.
+Fails open by design: if the uncompressed size or the free space can't be determined, the check is skipped and extraction proceeds as before, so it can never block a valid extraction that used to work.
+Affected: Manage_zip_roms (all three decompression call sites), new function check_disk_space_for_zip(), report (zip_roms_report.txt), log ($LOGS_PATH/Rom Inspector.txt).
+Purpose: Prevent a ZIP decompression from failing halfway through and leaving a corrupted/partial ROM on an SD card that was nearly full.
+Commit Message: "Add check_disk_space_for_zip() and check free space before every ZIP extraction in Manage_zip_roms."
+
+New feature (Export Collection Inventory)
+Added a new "Export Collection Inventory" entry to the main menu. It walks every system under /mnt/SDCARD/Roms using the same valid-extension matching as the rest of the script (get_valid_extensions / is_valid_extension), and writes a single manifest, collection_inventory.txt, listing every valid ROM name grouped by system, with a total game/system count at the top.
+Useful as a plain-text backup of "what I own" before reformatting an SD card, or to compare two cards.
+Implemented using only utilities already used elsewhere in the script (find, cat) - no new dependency was introduced.
+Affected: new function export_collection_inventory(), new report (collection_inventory.txt), main menu (/tmp/main_menu.menu), cleanup() temp file list.
+Purpose: Give users an easy way to keep a record of their collection independent of the ROM files themselves.
+Commit Message: "Add export_collection_inventory() and 'Export Collection Inventory' main menu entry."
+

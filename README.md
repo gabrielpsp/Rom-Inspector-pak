@@ -4,7 +4,7 @@
 
 ROM Inspector is a shell script designed for the TrimUI Brick running NextUI, enabling you to efficiently manage and analyze your ROM collections and artwork.
 
-**Version 1.0.0 — first stable release.** ROM Inspector has moved out of beta: a critical startup bug that prevented the pak from launching on NextUI has been fixed, and a trash-based safety net now protects against accidental deletions (see the [changelog](changelog.txt) for details).
+**Version 1.1.0.** ROM Inspector moved out of beta in 1.0.0: a critical startup bug that prevented the pak from launching on NextUI was fixed, and a trash-based safety net was added to protect against accidental deletions. 1.1.0 builds on that with the ability to restore a file straight out of the trash, a free-space check before ZIP decompression, and a full collection inventory export (see the [changelog](changelog.txt) for full details).
 
 This release provides a set of tools to optimize your SD card file organization by identifying and resolving common issues with ROMs and covers.
 
@@ -18,7 +18,10 @@ This release provides a set of tools to optimize your SD card file organization 
 - **📊 Detailed Statistics** — Generates reports on ROM counts per system, cover usage percentage, and disk usage (ROMs and covers).
 - **📝 ROM Name Validation** — Checks ROM names for invalid characters and formatting issues, generates a report, and offers options to auto-rename or delete problematic files.
 - **📦 ZIP ROM Management** — Scans ZIP ROM files, lets you decompress, delete, or skip them, and generates a detailed report with progress feedback.
-- **🗑️ Trash / Safety Net (New in 1.0.0)** — Deleted files (ROMs, covers, orphaned files, ZIPs) are moved to a dedicated Trash folder instead of being permanently erased. A new "Manage Trash" menu shows how much space it's using and lets you empty it once you're confident you no longer need those files.
+- **🗑️ Trash / Safety Net (New in 1.0.0)** — Deleted files (ROMs, covers, orphaned files, ZIPs) are moved to a dedicated Trash folder instead of being permanently erased, with a "Manage Trash" menu to check how much space it's using and empty it once you're confident you no longer need those files.
+- **↩️ Restore from Trash (New in 1.1.0)** — Restore any file straight back to its original location from the "Manage Trash" menu, with automatic folder recreation and safe renaming if a file already exists at that path.
+- **💾 Free Space Check (New in 1.1.0)** — Before extracting a ZIP ROM, the required space is checked against the free space available on the SD card. If there isn't enough room, extraction is skipped with a clear message instead of failing halfway through and leaving a corrupted file.
+- **📋 Export Collection Inventory (New in 1.1.0)** — Generates `collection_inventory.txt`, a plain-text manifest of every valid ROM in your library, grouped by system — handy as a backup record of your collection or to compare two SD cards.
 
 ## ⚙️ Technical Details
 
